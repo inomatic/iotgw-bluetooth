@@ -1,7 +1,5 @@
 #define _XOPEN_SOURCE 700
 
-#include "config.h"
-
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
