@@ -22,8 +22,6 @@ void mainloop_init(void);
 void mainloop_quit(void);
 void mainloop_exit_success(void);
 void mainloop_exit_failure(void);
-int mainloop_iteration(void);
-int mainloop_finish(void);
 int mainloop_run(void);
 int mainloop_run_with_signal(mainloop_signal_func func, void *user_data);
 

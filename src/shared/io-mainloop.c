@@ -13,6 +13,7 @@
 #endif
 
 #include <unistd.h>
+#include <stdio.h>
 #include <errno.h>
 #include <sys/socket.h>
 
@@ -153,6 +154,7 @@ struct io *io_new(int fd)
 
 	if (mainloop_add_fd(io->fd, io->events, io_callback,
 						io, io_cleanup) < 0) {
+		printf("Unable to add to mainloop: %s(%d)\n", strerror(errno), -errno);
 		free(io);
 		return NULL;
 	}
