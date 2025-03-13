@@ -433,11 +433,6 @@ static struct server *server_create(int fd, uint16_t mtu)
 		goto fail;
 	}
 
-	if (!bt_att_set_mtu(server->att, 512 + 5)) {
-		fprintf(stderr, "Failed to set ATT MTU\n");
-		goto fail;
-	}
-
 	if (!bt_att_set_close_on_unref(server->att, true)) {
 		fprintf(stderr, "Failed to set up ATT transport layer\n");
 		goto fail;
