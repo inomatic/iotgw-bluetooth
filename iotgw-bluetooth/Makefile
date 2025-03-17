@@ -20,8 +20,8 @@ MOSQUITTO_OBJ = mosquitto/mosquitto.o mosquitto/client_shared.o mosquitto/client
 IOTGW_BLUETOOTH_OBJ = ${MOSQUITTO_OBJ} iotgw-bluetooth.o iotgw-bluetooth-bt.o ../src/shared/att.o ../src/shared/hci.o ../src/shared/io-mainloop.o ../src/shared/mainloop.o ../src/shared/queue.o ../src/shared/util.o ../src/shared/crypto.o ../src/shared/mainloop-notify.o ../src/shared/gatt-helpers.o ../src/shared/gatt-client.o ../src/shared/gatt-server.o ../src/shared/gatt-db.o ../src/shared/timeout-mainloop.o ../lib/uuid.o
 
 iotgw-bluetooth:	 ${IOTGW_BLUETOOTH_OBJ}
-	cp ../../recipe-sysroot/usr/lib/arm-oe-linux-gnueabi/13.3.0/crt*.o .
-	cp ../../recipe-sysroot/usr/lib/crt*.o .
+	cp ../../recipe-sysroot/usr/lib/arm-oe-linux-gnueabi/13.3.0/crt*.o . || true
+	cp ../../recipe-sysroot/usr/lib/crt*.o . || true
 	$(CXX) $(IOTGW_BLUETOOTH_OBJ) -lmosquitto -lbluetooth -lc -lstdc++ -o iotgw-bluetooth
 
 clean:

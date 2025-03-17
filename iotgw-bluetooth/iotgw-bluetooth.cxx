@@ -32,6 +32,8 @@ std::vector<uint8_t> HexToBytes(const std::string &hex)
   return bytes;
 }
 
+bool isConnected = false;
+
 extern "C"
 {
   extern void sendBtNotification(const uint8_t *value, size_t length);
@@ -41,9 +43,9 @@ extern "C"
   static void mqtt_connected_callback()
   {
     printf("Connected to MQTT broker\n");
-    mqttpublish(BUILDVAR_GWBTSTATUS, "online");
+    isConnected = true;
 
-    mqttsubscribe("#", 0);
+    mqttsubscribe("#", 2);
   }
 
   static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_t len)
@@ -84,6 +86,8 @@ extern "C"
       return i;
     }
 
+    uint32_t uiLastOnlineSent = 0;
+
     do
     {
       if (!mqttloop())
@@ -97,6 +101,15 @@ extern "C"
         printf("BT failed\n");
         g_quit = true;
       }
+
+      uint32_t now = time(NULL);
+      if (isConnected && uiLastOnlineSent + 0 < now) {
+        uiLastOnlineSent = now;
+        char timestr[32];
+        snprintf(timestr, sizeof(timestr), "%ld", time(NULL));
+        mqttpublish("public/" BUILDVAR_GWBTSTATUS, timestr);
+      }
+
     } while (!g_quit);
 
     printf("Quitting MQTT...\n");

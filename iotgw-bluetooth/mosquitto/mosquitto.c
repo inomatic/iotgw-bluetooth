@@ -234,13 +234,13 @@ static int msgcount = 1;
 
 int mqttpublishbinary(const char *topic, const uint8_t *bytes, size_t len) {
 	int x = msgcount++;
-	my_publish(g_mosq, &x, topic, len, bytes, 0/*QoS*/, false/*retain*/);
+	my_publish(g_mosq, &x, topic, len, bytes, 2/*QoS*/, false/*retain*/);
 	return x;
 }
 
 int mqttpublish(const char *topic, const char *message) {
 	int x = msgcount++;
-	my_publish(g_mosq, &x, topic, strlen(message), message, 0/*QoS*/, false/*retain*/);
+	my_publish(g_mosq, &x, topic, strlen(message), message, 2/*QoS*/, false/*retain*/);
 	return x;
 }
 
