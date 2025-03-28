@@ -607,7 +607,7 @@ void get_bt_mac_addr() {
 int btinit()
 {
 	get_bt_mac_addr();
-	mqttpublish("bluetooth/hwaddr", bdaddr);
+	mqttpublish("bluetooth/hwaddr", btaddr);
 
 	mainloop_init();
 
