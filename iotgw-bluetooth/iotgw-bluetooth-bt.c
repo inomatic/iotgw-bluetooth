@@ -583,8 +583,32 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 	}
 }
 
+char btaddr[19];
+void get_bt_mac_addr() {
+	int dev_id = hci_get_route(NULL);
+	if (dev_id < 0) {
+		sprintf(btaddr, "00:00:00:00:00:00");
+	}
+
+	int sock = hci_open_dev(dev_id);
+	if (sock < 0) {
+		sprintf(btaddr, "00:00:00:00:00:01");
+	}
+
+	bdaddr_t bdaddr;
+	if (hci_devba(dev_id, &bdaddr) < 0) {
+		sprintf(btaddr, "00:00:00:00:00:02");
+	}
+
+	ba2str(&bdaddr, btaddr);
+	close(sock);
+}
+
 int btinit()
 {
+	get_bt_mac_addr();
+	mqttpublish("bluetooth/hwaddr", bdaddr);
+
 	mainloop_init();
 
 	bt_uuid16_create(&uuidDeviceGAP, 0x1800);
