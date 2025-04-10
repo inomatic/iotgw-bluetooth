@@ -688,7 +688,7 @@ int btloop() {
 		return EXIT_FAILURE;
 	}
 
-	if (isConnected && !bHwaddrSent) {
+	if (!bHwaddrSent) {
 		if (mqttpublish("bluetooth/hwaddr", btaddr) > 0) {
 			bHwaddrSent = true;
 		}
