@@ -607,7 +607,6 @@ void get_bt_mac_addr() {
 int btinit()
 {
 	get_bt_mac_addr();
-	mqttpublish("bluetooth/hwaddr", btaddr);
 
 	mainloop_init();
 
@@ -635,6 +634,8 @@ int btstart() {
 
 	return EXIT_SUCCESS;
 }
+
+bool bHwaddrSent = false;
 
 int btloop() {
 	if (sockL2CAP < 0) {
@@ -685,6 +686,12 @@ int btloop() {
 
 	if (mainloop_iteration()) {
 		return EXIT_FAILURE;
+	}
+
+	if (isConnected && !bHwaddrSent) {
+		if (mqttpublish("bluetooth/hwaddr", btaddr) > 0) {
+			bHwaddrSent = true;
+		}
 	}
 
 	return EXIT_SUCCESS;
