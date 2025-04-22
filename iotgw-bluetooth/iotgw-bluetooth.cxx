@@ -17,6 +17,7 @@
 #include <vector>
 #include <string>
 #include <sstream>
+#include <inttypes.h>
 
 std::vector<uint8_t> HexToBytes(const std::string &hex)
 {
@@ -106,7 +107,7 @@ extern "C"
       if (isConnected && uiLastOnlineSent + 0 < now) {
         uiLastOnlineSent = now;
         char timestr[32];
-        snprintf(timestr, sizeof(timestr), "%ld", time(NULL));
+        snprintf(timestr, sizeof(timestr), "%"PRIu32, time(NULL));
         mqttpublish("public/" BUILDVAR_GWBTSTATUS, timestr);
       }
 
