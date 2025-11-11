@@ -107,7 +107,7 @@ extern "C"
       if (isConnected && uiLastOnlineSent + 0 < now) {
         uiLastOnlineSent = now;
         char timestr[32];
-        snprintf(timestr, sizeof(timestr), "%"PRIu32, time(NULL));
+        snprintf(timestr, sizeof(timestr), "%" PRIu64, time(NULL));
         mqttpublish("public/" BUILDVAR_GWBTSTATUS, timestr);
       }
 
