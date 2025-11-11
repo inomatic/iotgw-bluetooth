@@ -1,0 +1,39 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**"
+            ],
+            "defines": [
+                "BUILDVAR_GWBTNAME=\"Inomatic IoT-Gateway\"",
+                "BUILDVAR_GWBTCONNECT=\"bluetooth/connect\"",
+                "BUILDVAR_GWBTSERVICEUUID=\"6E400001-C352-11E5-953D-0002A5D5C51B\"",
+                "BUILDVAR_GWBTRECEIVEUUID=\"6E400002-C352-11E5-953D-0002A5D5C51B\"",
+                "BUILDVAR_GWBTTRANSMITUUID=\"6E400003-C352-11E5-953D-0002A5D5C51B\"",
+                "BUILDVAR_GWBTSTATUS=\"bluetooth/status\"",
+                "BUILDVAR_GWBTBTGWFRAME=\"gateway/bluetoothframe\"",
+                "BUILDVAR_GWBTBTBTFRAME=\"bluetooth/bluetoothframe\"",
+                "BUILDVAR_GWBTCLIENTID=\"iotgw-bluetooth\"",
+                "BUILDVAR_GWBTQUIT=\"global/quit\"",
+                "BUILDVAR_GWBTMQTTHOST=\"127.0.0.1\"",
+                "BUILDVAR_GWBTMQTTPORT=1338",
+                "BUILDVAR_GWBTMQTTUSER=\"bluetooth\"",
+                "BUILDVAR_GWBTMQTTPASSWORD=\"ino\"",
+
+                "BUILDVAR_GWMQTTHOST=\"127.0.0.1\"",
+                "BUILDVAR_GWMQTTPORT=1884",
+                "BUILDVAR_GWMQTTUSER=\"gateway\"",
+                "BUILDVAR_GWMQTTPASSWORD=\"ino\"",
+                "BUILDVAR_GWQUIT=\"global/quit\"",
+                "BUILDVAR_GWCLIENTID=\"iotgw-gateway\"",
+                "BUILDVAR_GWBTBTCONNECT=\"bluetooth/connect\"",
+                "BUILDVAR_GWBTBTFRAME=\"bluetooth/bluetoothframe\"",
+                "BUILDVAR_GWSTATUS=\"gateway/status\"",
+                "BUILDVAR_GWBTGWFRAME=\"gateway/bluetoothframe\""
+            ],
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
