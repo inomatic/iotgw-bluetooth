@@ -70,6 +70,8 @@ extern void receivedBtPacket(const uint8_t *value, size_t len);
 static const char device_name[] = BUILDVAR_GWBTNAME;
 static bool verbose = true;
 
+static time_t lastReceivedBtPacketTime = 0;
+
 struct server {
 	int fd;
 	struct bt_att *att;
@@ -88,14 +90,11 @@ struct server {
 };
 
 struct server *g_server;
-
-static void print_prompt(void)
-{
-	
-}
+pthread_mutex_t g_server_lock;
 
 static struct server *server_create(int fd, uint16_t mtu);
 int btstart();
+static void server_destroy();
 
 static void att_disconnect_cb(int err, void *user_data)
 {
@@ -103,10 +102,9 @@ static void att_disconnect_cb(int err, void *user_data)
 	fflush(stderr);
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
+	lastReceivedBtPacketTime = 0;
 
-	gatt_db_unref(g_server->db);
-	bt_att_unref(g_server->att);
-	free(g_server);
+	server_destroy();
 
 	btstart();
 }
@@ -297,6 +295,8 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 		ecode = BT_ATT_ERROR_INVALID_OFFSET;
 		goto done;
 	}
+
+	lastReceivedBtPacketTime = time(NULL);
 
 	receivedBtPacket(value, len);
 
@@ -491,10 +491,18 @@ fail:
 	return NULL;
 }
 
-static void server_destroy(struct server *server)
+static void server_destroy()
 {
-	bt_gatt_server_unref(server->gatt);
-	gatt_db_unref(server->db);
+	pthread_mutex_lock(&g_server_lock);
+	if (g_server != NULL) {
+		bt_gatt_server_unref(g_server->gatt);
+		gatt_db_unref(g_server->db);
+		free(g_server->device_name);
+		bt_att_unref(g_server->att);
+		free(g_server);
+		g_server = NULL;
+	}
+	pthread_mutex_unlock(&g_server_lock);
 }
 
 static int sockL2CAP = -1;
@@ -565,7 +573,7 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 
 	ba2str(&addr.l2_bdaddr, ba);
 
-	mqttpublish("bluetooth/connect", ba);
+	mqttpublish(BUILDVAR_GWBTCONNECT, ba);
 
 	close(sockL2CAP);
 
@@ -573,6 +581,7 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 }
 
 void sendBtNotification(const uint8_t *value, size_t length) {
+	pthread_mutex_lock(&g_server_lock);
 	if (g_server != NULL) {
 		if (g_server->iotgw_data_enabled) {
 			if (!bt_gatt_server_send_notification(g_server->gatt, g_server->iotgw_data_handle, value, length, false)) {
@@ -581,6 +590,7 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 			}
 		}
 	}
+	pthread_mutex_unlock(&g_server_lock);
 }
 
 char btaddr[19];
@@ -606,6 +616,8 @@ void get_bt_mac_addr() {
 
 int btinit()
 {
+	pthread_mutex_init(&g_server_lock, NULL);
+
 	get_bt_mac_addr();
 
 	mainloop_init();
@@ -626,11 +638,10 @@ int btstart() {
 	sockL2CAP = -1;
 	sockConn = -1;
 	fdL2CAP = -1;
-	g_server = NULL;
+
+	server_destroy();
 
 	fprintf(stderr,"Running GATT server\n");
-
-	print_prompt();
 
 	return EXIT_SUCCESS;
 }
@@ -672,16 +683,30 @@ int btloop() {
 
 		fdL2CAP = l2cap_le_att_accept(&src_addr, sec, src_type);
 		if (fdL2CAP >= 0) {
+
+			pthread_mutex_lock(&g_server_lock);
+
 			g_server = server_create(fdL2CAP, mtu);
 			if (!g_server) {
 				close(fdL2CAP);
+				pthread_mutex_unlock(&g_server_lock);
 				return EXIT_FAILURE;
 			}
+			pthread_mutex_unlock(&g_server_lock);
 
 			fprintf(stderr,"Running GATT server\n");
-
-			print_prompt();
 		}
+	}
+
+	if (lastReceivedBtPacketTime != 0 && time(NULL) - lastReceivedBtPacketTime > 10) {
+		fprintf(stderr,"No data received for 10 seconds, disconnecting\n");
+		fflush(stderr);
+
+		mqttpublish(BUILDVAR_GWBTCONNECT, "-");
+		lastReceivedBtPacketTime = 0;
+
+		server_destroy();
+		return btstart();
 	}
 
 	if (mainloop_iteration()) {
@@ -701,9 +726,10 @@ int btquit() {
 	fprintf(stderr,"\n\nShutting down...\n");
 
 	mainloop_finish();
-	if (g_server) {
-		server_destroy(g_server);
-	}
+
+	server_destroy();
+
+	pthread_mutex_destroy(&g_server_lock);
 
 	return EXIT_SUCCESS;
 }
