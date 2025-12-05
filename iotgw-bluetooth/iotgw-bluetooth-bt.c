@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <pthread.h>
 #include <sys/stat.h>
 
 #include "lib/bluetooth.h"
@@ -616,7 +617,10 @@ void get_bt_mac_addr() {
 
 int btinit()
 {
-	pthread_mutex_init(&g_server_lock, NULL);
+	pthread_mutexattr_t mutex_attr;
+	pthread_mutexattr_init(&mutex_attr);
+	pthread_mutexattr_settype(&mutex_attr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&g_server_lock, &mutex_attr);
 
 	get_bt_mac_addr();
 
