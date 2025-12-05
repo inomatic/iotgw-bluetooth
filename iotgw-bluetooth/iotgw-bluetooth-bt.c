@@ -698,8 +698,8 @@ int btloop() {
 		}
 	}
 
-	if (lastReceivedBtPacketTime != 0 && time(NULL) - lastReceivedBtPacketTime > 10) {
-		fprintf(stderr,"No data received for 10 seconds, disconnecting\n");
+	if (lastReceivedBtPacketTime != 0 && time(NULL) - lastReceivedBtPacketTime > 20) {
+		fprintf(stderr,"No data received for 20 seconds, disconnecting\n");
 		fflush(stderr);
 
 		mqttpublish(BUILDVAR_GWBTCONNECT, "-");
