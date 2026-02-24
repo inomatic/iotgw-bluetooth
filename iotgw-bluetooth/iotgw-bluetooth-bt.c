@@ -22,6 +22,7 @@
 #include <getopt.h>
 #include <unistd.h>
 #include <errno.h>
+#include <poll.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <pthread.h>
@@ -68,12 +69,15 @@ bt_uuid_t uuidTransmit;
 
 extern void receivedBtPacket(const uint8_t *value, size_t len);
 
+int dev_id;
+int dev_sock;
+
 static const char device_name[] = BUILDVAR_GWBTNAME;
 static bool verbose = true;
 
-static time_t lastReceivedBtPacketTime = 0;
+typedef struct {
+	time_t lastReceivedBtPacketTime;
 
-struct server {
 	int fd;
 	struct bt_att *att;
 	struct gatt_db *db;
@@ -88,14 +92,27 @@ struct server {
 	uint16_t iotgw_handle;
 	uint16_t iotgw_data_handle;
 	bool iotgw_data_enabled;
-};
+} server_t;
 
-struct server *g_server;
+#define MaxServers 5
+
+server_t* g_servers[MaxServers] = {0};
 pthread_mutex_t g_server_lock;
 
-static struct server *server_create(int fd, uint16_t mtu);
-int btstart();
-static void server_destroy();
+static server_t *server_create(int fd, uint16_t mtu);
+static void server_destroy(uint8_t i);
+static void servers_destroy();
+
+static void restart_hci_advertising() {
+	uint8_t adv_enable = 1;
+	int timeout = 1000;
+	uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
+	if (res != 0) {
+		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX Failed to enable LE advertising %d %d\n", res, errno);
+	} else {
+		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX HCI LE Advertising restarted successfully!\n");
+	}
+}
 
 static void att_disconnect_cb(int err, void *user_data)
 {
@@ -103,11 +120,14 @@ static void att_disconnect_cb(int err, void *user_data)
 	fflush(stderr);
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
-	lastReceivedBtPacketTime = 0;
 
-	server_destroy();
-
-	btstart();
+	server_t *server = user_data;
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] == server) {
+			g_servers[i]->lastReceivedBtPacketTime = 0;
+		}
+		server_destroy(i);
+	}
 }
 
 static void att_debug_cb(const char *str, void *user_data)
@@ -130,7 +150,7 @@ static void gap_device_name_read_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	struct server *server = user_data;
+	server_t *server = user_data;
 	uint8_t error = 0;
 	size_t len = 0;
 	const uint8_t *value = NULL;
@@ -181,7 +201,7 @@ static void gatt_svc_chngd_ccc_read_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	struct server *server = user_data;
+	server_t *server = user_data;
 	uint8_t value[2];
 
 	PRLOG("Service Changed CCC Read called\n");
@@ -198,7 +218,7 @@ static void gatt_svc_chngd_ccc_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	struct server *server = user_data;
+	server_t *server = user_data;
 	uint8_t ecode = 0;
 
 	PRLOG("Service Changed CCC Write called\n");
@@ -232,7 +252,7 @@ static void iotgw_data_ccc_read_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	struct server *server = user_data;
+	server_t *server = user_data;
 	uint8_t value[2];
 
 	value[0] = server->iotgw_data_enabled ? 0x01 : 0x00;
@@ -247,7 +267,7 @@ static void iotgw_data_ccc_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	struct server *server = user_data;
+	server_t *server = user_data;
 	uint8_t ecode = 0;
 
 	if (!value || len != 2) {
@@ -285,6 +305,7 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
+	server_t *server = user_data;
 	uint8_t ecode = 0;
 
 	if (!value) {
@@ -297,7 +318,11 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 		goto done;
 	}
 
-	lastReceivedBtPacketTime = time(NULL);
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] == server) {
+			g_servers[i]->lastReceivedBtPacketTime = time(NULL);
+		}
+	}
 
 	receivedBtPacket(value, len);
 
@@ -305,7 +330,7 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
-static void populate_gap_service(struct server *server)
+static void populate_gap_service(server_t *server)
 {
 	struct gatt_db_attribute *service, *tmp;
 	uint16_t appearance;
@@ -356,7 +381,7 @@ static void populate_gap_service(struct server *server)
 	gatt_db_service_set_active(service, true);
 }
 
-static void populate_gatt_service(struct server *server)
+static void populate_gatt_service(server_t *server)
 {
 	struct gatt_db_attribute *service, *svc_chngd;
 
@@ -381,7 +406,7 @@ static void populate_gatt_service(struct server *server)
 	gatt_db_service_set_active(service, true);
 }
 
-static void populate_iotgw_service(struct server *server)
+static void populate_iotgw_service(server_t *server)
 {
 	struct gatt_db_attribute *service, *iotgw_data;
 
@@ -410,19 +435,19 @@ static void populate_iotgw_service(struct server *server)
 	gatt_db_service_set_active(service, true);
 }
 
-static void populate_db(struct server *server)
+static void populate_db(server_t *server)
 {
 	populate_gap_service(server);
 	populate_gatt_service(server);
 	populate_iotgw_service(server);
 }
 
-static struct server *server_create(int fd, uint16_t mtu)
+static server_t *server_create(int fd, uint16_t mtu)
 {
-	struct server *server;
+	server_t *server;
 	size_t name_len = strlen(device_name);
 
-	server = new0(struct server, 1);
+	server = new0(server_t, 1);
 	if (!server) {
 		fprintf(stderr, "Failed to allocate memory for server\n");
 		return NULL;
@@ -439,8 +464,7 @@ static struct server *server_create(int fd, uint16_t mtu)
 		goto fail;
 	}
 
-	if (!bt_att_register_disconnect(server->att, att_disconnect_cb, NULL,
-									NULL)) {
+	if (!bt_att_register_disconnect(server->att, att_disconnect_cb, server, NULL)) {
 		fprintf(stderr, "Failed to set ATT disconnect handler\n");
 		goto fail;
 	}
@@ -492,22 +516,37 @@ fail:
 	return NULL;
 }
 
-static void server_destroy()
+static void server_destroy(uint8_t i)
 {
 	pthread_mutex_lock(&g_server_lock);
-	if (g_server != NULL) {
-		bt_gatt_server_unref(g_server->gatt);
-		gatt_db_unref(g_server->db);
-		free(g_server->device_name);
-		bt_att_unref(g_server->att);
-		free(g_server);
-		g_server = NULL;
+	if (g_servers[i] != NULL) {
+		bt_gatt_server_unref(g_servers[i]->gatt);
+		gatt_db_unref(g_servers[i]->db);
+		free(g_servers[i]->device_name);
+		bt_att_unref(g_servers[i]->att);
+		free(g_servers[i]);
+		g_servers[i] = NULL;
+	}
+	pthread_mutex_unlock(&g_server_lock);
+}
+
+static void servers_destroy()
+{
+	pthread_mutex_lock(&g_server_lock);
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] != NULL) {
+			bt_gatt_server_unref(g_servers[i]->gatt);
+			gatt_db_unref(g_servers[i]->db);
+			free(g_servers[i]->device_name);
+			bt_att_unref(g_servers[i]->att);
+			free(g_servers[i]);
+			g_servers[i] = NULL;
+		}
 	}
 	pthread_mutex_unlock(&g_server_lock);
 }
 
 static int sockL2CAP = -1;
-static int sockConn = -1;
 
 static int l2cap_le_att_listen(bdaddr_t *src, int sec,
 							uint8_t src_type)
@@ -567,7 +606,7 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 
 	memset(&addr, 0, sizeof(addr));
 	optlen = sizeof(addr);
-	sockConn = accept(sockL2CAP, (struct sockaddr *) &addr, &optlen);
+	int sockConn = accept(sockL2CAP, (struct sockaddr *) &addr, &optlen);
 	if (sockConn < 0) {
 		return -1;
 	}
@@ -583,11 +622,13 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 
 void sendBtNotification(const uint8_t *value, size_t length) {
 	pthread_mutex_lock(&g_server_lock);
-	if (g_server != NULL) {
-		if (g_server->iotgw_data_enabled) {
-			if (!bt_gatt_server_send_notification(g_server->gatt, g_server->iotgw_data_handle, value, length, false)) {
-				fprintf(stderr,"Failed to initiate notification\n");
-				fflush(stderr);
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] != NULL) {
+			if (g_servers[i]->iotgw_data_enabled) {
+				if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle, value, length, false)) {
+					fprintf(stderr,"Failed to initiate notification\n");
+					fflush(stderr);
+				}
 			}
 		}
 	}
@@ -596,27 +637,27 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 
 char btaddr[19];
 void get_bt_mac_addr() {
-	int dev_id = hci_get_route(NULL);
-	if (dev_id < 0) {
-		sprintf(btaddr, "00:00:00:00:00:00");
-	}
-
-	int sock = hci_open_dev(dev_id);
-	if (sock < 0) {
-		sprintf(btaddr, "00:00:00:00:00:01");
-	}
-
 	bdaddr_t bdaddr;
 	if (hci_devba(dev_id, &bdaddr) < 0) {
 		sprintf(btaddr, "00:00:00:00:00:02");
 	}
 
 	ba2str(&bdaddr, btaddr);
-	close(sock);
 }
 
 int btinit()
 {
+	dev_id = hci_get_route(NULL);
+	if (dev_id < 0) {
+		return EXIT_FAILURE;
+	}
+
+	dev_sock = hci_open_dev(dev_id);
+	if (dev_sock < 0) {
+		return EXIT_FAILURE;
+	}
+	fcntl(dev_sock, F_SETFL, O_NONBLOCK);
+
 	pthread_mutexattr_t mutex_attr;
 	pthread_mutexattr_init(&mutex_attr);
 	pthread_mutexattr_settype(&mutex_attr, PTHREAD_MUTEX_RECURSIVE);
@@ -632,18 +673,22 @@ int btinit()
 	bt_string_to_uuid(&uuidReceive, BUILDVAR_GWBTRECEIVEUUID);
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
 
-	return btstart();
-}
+	/*struct hci_filter flt;
+	hci_filter_clear(&flt);
+	hci_filter_set_ptype(HCI_EVENT_PKT, &flt);
 
-static int fdL2CAP;
+	hci_filter_set_event(EVT_LE_META_EVENT, &flt);
+	hci_filter_set_event(EVT_DISCONN_COMPLETE, &flt);
 
-int btstart() {
+	if (setsockopt(dev_sock, SOL_HCI, HCI_FILTER, &flt, sizeof(flt)) < 0) {
+		perror("Failed to set HCI filter");
+		close(dev_sock);
+		return EXIT_FAILURE;
+	}*/
 
 	sockL2CAP = -1;
-	sockConn = -1;
-	fdL2CAP = -1;
 
-	server_destroy();
+	servers_destroy();
 
 	fprintf(stderr,"Running GATT server\n");
 
@@ -651,8 +696,61 @@ int btstart() {
 }
 
 bool bHwaddrSent = false;
+uint32_t lastRestartAdvertising = 0;
 
 int btloop() {
+	unsigned char buf[HCI_MAX_EVENT_SIZE];
+	struct pollfd fds[1];
+	fds[0].fd = dev_sock;
+	fds[0].events = POLLIN;
+
+	int ret = poll(fds, 1, 1);
+	if (ret < 0) {
+			perror("Poll error");
+			return EXIT_FAILURE;
+	} 
+	else if (ret > 0) {
+		if (fds[0].revents & POLLIN) {
+			printf("HCI Event received\n");
+			ssize_t len = read(dev_sock, buf, sizeof(buf));
+			if (len < 0) {
+				perror("Error reading HCI socket");
+				return EXIT_FAILURE;
+			}
+			printf("HCI Event read\n");
+
+			// 3. Parse the HCI Event Packet
+			// buf[0] is the packet type (HCI_EVENT_PKT)
+			// buf[1] is the event code
+			// buf[2] is the parameter length
+			// buf[3...] is the actual event data
+
+			hci_event_hdr *hdr = (hci_event_hdr *)(buf + 1);
+			uint8_t *ptr = buf + 1 + HCI_EVENT_HDR_SIZE;
+
+			if (hdr->evt == EVT_LE_META_EVENT) {
+					evt_le_meta_event *meta = (evt_le_meta_event *)ptr;
+					
+					if (meta->subevent == EVT_LE_CONN_COMPLETE) {
+							evt_le_connection_complete *cc = (evt_le_connection_complete *)(meta->data);
+							
+							if (cc->status == 0) { // 0 means success
+									printf("Client Connected! Handle: 0x%04X\n", cc->handle);
+									restart_hci_advertising();
+							}
+					}
+			} 
+			else if (hdr->evt == EVT_DISCONN_COMPLETE) {
+					evt_disconn_complete *dc = (evt_disconn_complete *)ptr;
+					
+					if (dc->status == 0) {
+							printf("Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
+					}
+			}
+		}
+	}
+
+
 	if (sockL2CAP < 0) {
 		bdaddr_t src_addr;
 		int dev_id = -1;
@@ -671,7 +769,7 @@ int btloop() {
 			fprintf(stderr, "Failed to listen for L2CAP ATT connection\n");
 			return EXIT_FAILURE;
 		}
-	} else if (sockConn < 0) {
+	} else {
 		bdaddr_t src_addr;
 		int dev_id = -1;
 		int sec = BT_SECURITY_LOW;
@@ -685,32 +783,47 @@ int btloop() {
 			return EXIT_FAILURE;
 		}
 
-		fdL2CAP = l2cap_le_att_accept(&src_addr, sec, src_type);
+		int fdL2CAP = l2cap_le_att_accept(&src_addr, sec, src_type);
 		if (fdL2CAP >= 0) {
 
-			pthread_mutex_lock(&g_server_lock);
-
-			g_server = server_create(fdL2CAP, mtu);
-			if (!g_server) {
+			server_t *server = server_create(fdL2CAP, mtu);
+			if (!server) {
 				close(fdL2CAP);
-				pthread_mutex_unlock(&g_server_lock);
 				return EXIT_FAILURE;
+			}
+
+			pthread_mutex_lock(&g_server_lock);
+			for(uint8_t i = 0; i < MaxServers; i++) {
+				if (g_servers[i] == NULL) {
+					g_servers[i] = server;
+					break;
+				}
 			}
 			pthread_mutex_unlock(&g_server_lock);
 
 			fprintf(stderr,"Running GATT server\n");
+
+			restart_hci_advertising();
 		}
 	}
 
-	if (lastReceivedBtPacketTime != 0 && time(NULL) - lastReceivedBtPacketTime > 20) {
-		fprintf(stderr,"No data received for 20 seconds, disconnecting\n");
-		fflush(stderr);
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] != NULL) {
+			if (g_servers[i]->lastReceivedBtPacketTime != 0 && time(NULL) - g_servers[i]->lastReceivedBtPacketTime > 20) {
+				fprintf(stderr,"No data received for 20 seconds, disconnecting\n");
+				fflush(stderr);
 
-		mqttpublish(BUILDVAR_GWBTCONNECT, "-");
-		lastReceivedBtPacketTime = 0;
+				mqttpublish(BUILDVAR_GWBTCONNECT, "-");
+				g_servers[i]->lastReceivedBtPacketTime = 0;
 
-		server_destroy();
-		return btstart();
+				server_destroy(i);
+			}
+		}
+	}
+
+	if (time(NULL) - lastRestartAdvertising > 10) {
+		//restart_hci_advertising();
+		lastRestartAdvertising = time(NULL);
 	}
 
 	if (mainloop_iteration()) {
@@ -731,7 +844,7 @@ int btquit() {
 
 	mainloop_finish();
 
-	server_destroy();
+	servers_destroy();
 
 	pthread_mutex_destroy(&g_server_lock);
 
