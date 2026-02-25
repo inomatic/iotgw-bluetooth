@@ -101,7 +101,7 @@ pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(uint8_t i);
-static void servers_destroy();
+bool advertising = false;
 
 static void restart_hci_advertising() {
 	uint8_t adv_enable = 1;
@@ -110,6 +110,7 @@ static void restart_hci_advertising() {
 	if (res != 0) {
 		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX Failed to enable LE advertising %d %d\n", res, errno);
 	} else {
+		advertising = true;
 		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX HCI LE Advertising restarted successfully!\n");
 	}
 }
@@ -520,6 +521,10 @@ static void server_destroy(uint8_t i)
 {
 	pthread_mutex_lock(&g_server_lock);
 	if (g_servers[i] != NULL) {
+		if (g_servers[i]->fd >= 0) {
+			close(g_servers[i]->fd);
+			g_servers[i]->fd = -1;
+		}
 		bt_gatt_server_unref(g_servers[i]->gatt);
 		gatt_db_unref(g_servers[i]->db);
 		free(g_servers[i]->device_name);
@@ -530,11 +535,15 @@ static void server_destroy(uint8_t i)
 	pthread_mutex_unlock(&g_server_lock);
 }
 
-static void servers_destroy()
+void servers_destroy()
 {
 	pthread_mutex_lock(&g_server_lock);
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		if (g_servers[i] != NULL) {
+			if (g_servers[i]->fd >= 0) {
+				close(g_servers[i]->fd);
+				g_servers[i]->fd = -1;
+			}
 			bt_gatt_server_unref(g_servers[i]->gatt);
 			gatt_db_unref(g_servers[i]->db);
 			free(g_servers[i]->device_name);
@@ -615,7 +624,8 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, ba);
 
-	close(sockL2CAP);
+	//AAA close(sockL2CAP);
+	//AAA sockL2CAP = -1;
 
 	return sockConn;
 }
@@ -688,7 +698,7 @@ int btinit()
 
 	sockL2CAP = -1;
 
-	servers_destroy();
+	//servers_destroy();
 
 	fprintf(stderr,"Running GATT server\n");
 
@@ -736,6 +746,7 @@ int btloop() {
 							
 							if (cc->status == 0) { // 0 means success
 									printf("Client Connected! Handle: 0x%04X\n", cc->handle);
+									advertising = false;
 									restart_hci_advertising();
 							}
 					}
@@ -745,6 +756,9 @@ int btloop() {
 					
 					if (dc->status == 0) {
 							printf("Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
+							if (!advertising) {
+								restart_hci_advertising();
+							}
 					}
 			}
 		}
@@ -808,17 +822,20 @@ int btloop() {
 	}
 
 	for(uint8_t i = 0; i < MaxServers; i++) {
+		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->lastReceivedBtPacketTime != 0 && time(NULL) - g_servers[i]->lastReceivedBtPacketTime > 20) {
 				fprintf(stderr,"No data received for 20 seconds, disconnecting\n");
 				fflush(stderr);
 
 				mqttpublish(BUILDVAR_GWBTCONNECT, "-");
+				close(g_servers[i]->fd);
+				g_servers[i]->fd = -1;
 				g_servers[i]->lastReceivedBtPacketTime = 0;
-
 				server_destroy(i);
 			}
 		}
+		pthread_mutex_unlock(&g_server_lock);
 	}
 
 	if (time(NULL) - lastRestartAdvertising > 10) {
@@ -839,15 +856,25 @@ int btloop() {
 	return EXIT_SUCCESS;
 }
 
+void bt_at_exit() {
+
+	fprintf(stderr,"Destroying servers...\n");
+	servers_destroy();
+	if (sockL2CAP >= 0) {
+		fprintf(stderr,"Closing socket...\n");
+		close(sockL2CAP);
+		sockL2CAP = -1;
+	}
+}
+
 int btquit() {
 	fprintf(stderr,"\n\nShutting down...\n");
 
 	mainloop_finish();
 
-	servers_destroy();
+	bt_at_exit();
 
 	pthread_mutex_destroy(&g_server_lock);
 
 	return EXIT_SUCCESS;
 }
-

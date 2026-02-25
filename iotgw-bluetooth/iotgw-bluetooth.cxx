@@ -73,10 +73,21 @@ extern "C"
     g_quit = true;
   }
 
+  extern void bt_at_exit();
+
+  static void exit_handler(void)
+  {
+    bt_at_exit();
+    printf("Exit handler ended...\n");
+  }
+
   int main(int argc, char *argv[])
   {
     signal(SIGINT, intHandler);
     signal(SIGKILL, intHandler);
+
+    atexit(exit_handler);
+
 
     mqttinit(BUILDVAR_GWBTCLIENTID, mqtt_message_callback, mqtt_connected_callback);
 
