@@ -97,6 +97,63 @@ static struct server *server_create(int fd, uint16_t mtu);
 int btstart();
 static void server_destroy();
 
+void restart_hci_advertising() {
+	int dev_id = hci_get_route(NULL);
+	if (dev_id < 0) {
+			perror("No Bluetooth adapter found");
+			return;
+	}
+
+	int dd = hci_open_dev(dev_id);
+	if (dd < 0) {
+			perror("Could not open adapter");
+			return;
+	}
+
+	uint8_t adv_enable = 1;
+	int timeout = 1000; // 1 second timeout for the command to succeed
+	if (hci_le_set_advertise_enable(dd, adv_enable, timeout) < 0) {
+			perror("Failed to enable LE advertising");
+	} else {
+			printf("HCI LE Advertising restarted successfully!\n");
+	}
+
+	hci_close_dev(dd);
+}
+
+int disconnect_client(uint16_t handle) {
+	int dev_id = hci_get_route(NULL); 
+
+	// Open a raw socket to that chip. 
+	// THIS returns the 'dd' you will use everywhere else.
+	int dd = hci_open_dev(dev_id); 
+	if (dd < 0) {
+			perror("Failed to open Bluetooth adapter");
+			exit(1);
+	}
+
+    uint8_t reason = HCI_OE_USER_ENDED_CONNECTION; 
+    int timeout_ms = 2000; // 2 second timeout for the command to be accepted
+
+		pthread_mutex_lock(&g_server_lock);
+
+		if (g_server != NULL) {
+
+			if (hci_disconnect(dd, handle, reason, timeout_ms) < 0) {
+					perror("Failed to send disconnect command");
+					return -1;
+			}
+
+		}
+		g_server->fd
+
+		pthread_mutex_unlock(&g_server_lock);
+
+
+    printf("Disconnect command sent for handle 0x%04X\n", handle);
+    return 0;
+}
+
 static void att_disconnect_cb(int err, void *user_data)
 {
 	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
@@ -107,6 +164,7 @@ static void att_disconnect_cb(int err, void *user_data)
 
 	server_destroy();
 
+	//restart_hci_advertising();
 	btstart();
 }
 
@@ -710,6 +768,8 @@ int btloop() {
 		lastReceivedBtPacketTime = 0;
 
 		server_destroy();
+
+
 		return btstart();
 	}
 
