@@ -120,6 +120,9 @@ extern "C"
         char timestr[32];
         snprintf(timestr, sizeof(timestr), "%" PRIu64, time(NULL));
         mqttpublish("public/" BUILDVAR_GWBTSTATUS, timestr);
+
+        snprintf(timestr, sizeof(timestr), "1");
+        mqttpublish("public/bluetooth/iotgw-bluetooth-version", timestr);
       }
 
     } while (!g_quit);
