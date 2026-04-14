@@ -429,7 +429,7 @@ static void populate_iotgw_service(server_t *server)
 
 	gatt_db_service_add_characteristic(service, &uuidReceive,
 						BT_ATT_PERM_WRITE,
-						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
+						BT_GATT_CHRC_PROP_WRITE,
 						NULL, iotgw_data_write_cb,
 						server);
 
