@@ -675,6 +675,39 @@ int btinit()
 
 	get_bt_mac_addr();
 
+	uint8_t raw_adv_data[] = {
+			2, 0x01, 0x06,             // Flags: LE General Discoverable Mode, BR/EDR Not Supported
+			//9, 0x09, 'I','n','o','I','o','T','G','W', // Complete Local Name
+			0x11, 0x06, 0x1B, 0xC5, 0xD5, 0xA5, 0x02, 0x00, 0x3D, 0x95, 0xE5, 0x11, 0x52, 0xC3, 0x01, 0x00, 0x40, 0x6E  //incomplete service list
+			//			6E400001-C352-11E5-953D-0002A5D5C51B
+	};
+
+	le_set_advertising_data_cp adv_data_cp = {0};
+	
+	// The length of the actual payload
+	adv_data_cp.length = sizeof(raw_adv_data);
+	
+	// Copy payload into the 31-byte data array inside the struct
+	memcpy(adv_data_cp.data, raw_adv_data, sizeof(raw_adv_data));
+
+	// 3. Build the HCI Request to set the data
+	struct hci_request rq;
+	memset(&rq, 0, sizeof(rq));
+	rq.ogf = OGF_LE_CTL;
+	rq.ocf = OCF_LE_SET_ADVERTISING_DATA;
+	rq.cparam = &adv_data_cp;
+	rq.clen = LE_SET_ADVERTISING_DATA_CP_SIZE;
+	rq.rparam = NULL;
+	rq.rlen = 0;
+
+	// Send the "Set Advertising Data" command
+	if (hci_send_req(dev_sock, &rq, 1000) < 0) {
+			perror("Failed to set advertising data");
+			close(dev_sock);
+			return EXIT_FAILURE;
+	}
+
+	
 	mainloop_init();
 
 	bt_uuid16_create(&uuidDeviceGAP, 0x1800);
