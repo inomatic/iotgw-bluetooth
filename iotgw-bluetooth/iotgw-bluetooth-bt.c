@@ -45,9 +45,13 @@
 
 bt_uuid_t uuidDeviceGAP;
 bt_uuid_t uuidDeviceGATT;
-bt_uuid_t uuidService;
+bt_uuid_t uuidDataService;
 bt_uuid_t uuidReceive;
 bt_uuid_t uuidTransmit;
+
+bt_uuid_t uuidDeviceInformationService;
+bt_uuid_t uuidSerial;
+bt_uuid_t uuidManufacturerName;
 
 #define ATT_CID 4
 
@@ -89,8 +93,10 @@ typedef struct {
 	uint16_t gatt_svc_chngd_handle;
 	bool svc_chngd_enabled;
 
-	uint16_t iotgw_handle;
+	uint16_t iotgw_dataservice_handle;
 	uint16_t iotgw_data_handle;
+
+	uint16_t iotgw_devinfo_handle;
 	bool iotgw_data_enabled;
 } server_t;
 
@@ -407,14 +413,82 @@ static void populate_gatt_service(server_t *server)
 	gatt_db_service_set_active(service, true);
 }
 
+#define inomatic_serialno_OtpPosition 0x140
+
+void readSerial() {
+	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
+	if (fd < 0) {
+		Ino_Print(0, "Could not open nvmem device for inomatic_serialno");
+		return;
+	}
+	off_t pos = lseek(fd, inomatic_serialno_OtpPosition, SEEK_SET);
+	if (pos != inomatic_serialno_OtpPosition) {
+		Ino_Print(0, "Could not seek to inomatic_serialno position");
+		close(fd);
+		return;
+	}
+	uint32_t sn = 0;
+	uint32_t serialno;
+	ssize_t count = read (fd, &sn, sizeof(serialno));
+	if (count == sizeof(serialno)) {
+		serialno = sn;
+		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "%02d%02d%03d", (serialno >> 24) & 0xff, (serialno >> 16) & 0xff, serialno & 0xffff);
+		Ino_Print(1, "inomatic_serialno: %s", inomatic_serialno);
+	} else {
+		Ino_Print(0, "Could not read inomatic_serialno");
+	}
+	close(fd);
+}
+char inomatic_serialno[20] = {0};
+char *inomatic_name = "inomatic GmbH";
+
+void read_userdata_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data) {
+
+	if (inomatic_serialno[0] == '\0') {
+		readSerial();
+	}
+	
+	uint8_t error = 0;
+	size_t len = 0;
+	const uint8_t *value = NULL;
+
+	PRLOG("GAP Serial Read called\n");
+
+	len = strlen(user_data);
+
+	if (offset > len) {
+		error = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	len -= offset;
+	value = &user_data[offset];
+
+done:
+	gatt_db_attribute_read_result(attrib, id, error, value, len);
+}
+
 static void populate_iotgw_service(server_t *server)
 {
-	struct gatt_db_attribute *service, *iotgw_data;
+	struct gatt_db_attribute *serviceDevInfo;
+	serviceDevInfo = gatt_db_add_service(server->db, &uuidDeviceInformationService, true, 8);
+	server->iotgw_devinfo_handle = gatt_db_attribute_get_handle(serviceDevInfo);
 
-	service = gatt_db_add_service(server->db, &uuidService, true, 8);
-	server->iotgw_handle = gatt_db_attribute_get_handle(service);
+	gatt_db_service_add_characteristic(serviceDevInfo, &uuidSerial, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_serialno);
+	gatt_db_service_add_characteristic(serviceDevInfo, &uuidManufacturerName, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_name);
 
-	iotgw_data = gatt_db_service_add_characteristic(service, &uuidTransmit,
+	gatt_db_service_set_active(serviceDevInfo, true);
+
+
+
+	struct gatt_db_attribute *serviceData, *iotgw_data;
+	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 8);
+	server->iotgw_dataservice_handle = gatt_db_attribute_get_handle(serviceData);
+
+	iotgw_data = gatt_db_service_add_characteristic(serviceData, &uuidTransmit,
 						BT_ATT_PERM_NONE,
 						BT_GATT_CHRC_PROP_NOTIFY,
 						NULL, NULL, NULL);
@@ -422,18 +496,18 @@ static void populate_iotgw_service(server_t *server)
 
 	bt_uuid_t uuid1;
 	bt_uuid16_create(&uuid1, GATT_CLIENT_CHARAC_CFG_UUID);
-	gatt_db_service_add_descriptor(service, &uuid1,
+	gatt_db_service_add_descriptor(serviceData, &uuid1,
 					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
 					iotgw_data_ccc_read_cb,
 					iotgw_data_ccc_write_cb, server);
 
-	gatt_db_service_add_characteristic(service, &uuidReceive,
+	gatt_db_service_add_characteristic(serviceData, &uuidReceive,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE,
 						NULL, iotgw_data_write_cb,
 						server);
 
-	gatt_db_service_set_active(service, true);
+	gatt_db_service_set_active(serviceData, true);
 }
 
 static void populate_db(server_t *server)
@@ -712,9 +786,13 @@ int btinit()
 
 	bt_uuid16_create(&uuidDeviceGAP, 0x1800);
 	bt_uuid16_create(&uuidDeviceGATT, 0x1801);
-	bt_string_to_uuid(&uuidService, BUILDVAR_GWBTSERVICEUUID);
+	bt_string_to_uuid(&uuidDataService, BUILDVAR_GWBTSERVICEUUID);
 	bt_string_to_uuid(&uuidReceive, BUILDVAR_GWBTRECEIVEUUID);
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
+
+	bt_uuid16_create(&uuidDeviceInformationService, 0x180A);
+	bt_uuid16_create(&uuidSerial, 0x2A25);
+	bt_uuid16_create(&uuidManufacturerName, 0x2A29);
 
 	/*struct hci_filter flt;
 	hci_filter_clear(&flt);
