@@ -421,12 +421,12 @@ char *inomatic_name = "inomatic GmbH";
 void readSerial() {
 	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
 	if (fd < 0) {
-		Ino_Print(0, "Could not open nvmem device for inomatic_serialno");
+		printf("Could not open nvmem device for inomatic_serialno\n");
 		return;
 	}
 	off_t pos = lseek(fd, inomatic_serialno_OtpPosition, SEEK_SET);
 	if (pos != inomatic_serialno_OtpPosition) {
-		Ino_Print(0, "Could not seek to inomatic_serialno position");
+		printf("Could not seek to inomatic_serialno position\n");
 		close(fd);
 		return;
 	}
@@ -436,9 +436,9 @@ void readSerial() {
 	if (count == sizeof(serialno)) {
 		serialno = sn;
 		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "%02d%02d%03d", (serialno >> 24) & 0xff, (serialno >> 16) & 0xff, serialno & 0xffff);
-		Ino_Print(1, "inomatic_serialno: %s", inomatic_serialno);
+		printf("inomatic_serialno: %s\n", inomatic_serialno);
 	} else {
-		Ino_Print(0, "Could not read inomatic_serialno");
+		printf("Could not read inomatic_serialno\n");
 	}
 	close(fd);
 }
