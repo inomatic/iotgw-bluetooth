@@ -49,6 +49,10 @@ bt_uuid_t uuidDataService;
 bt_uuid_t uuidReceive;
 bt_uuid_t uuidTransmit;
 
+bt_uuid_t uuidDeviceInformationService;
+bt_uuid_t uuidSerial;
+bt_uuid_t uuidManufacturerName;
+
 #define ATT_CID 4
 
 #define PRLOG(...) \
@@ -333,38 +337,6 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
-char inomatic_serialno[20] = {0};
-char *inomatic_name = "inomatic GmbH";
-
-void read_userdata_cb(struct gatt_db_attribute *attrib,
-					unsigned int id, uint16_t offset,
-					uint8_t opcode, struct bt_att *att,
-					void *user_data) {
-
-	if (inomatic_serialno[0] == '\0') {
-		readSerial();
-	}
-	
-	uint8_t error = 0;
-	size_t len = 0;
-	const uint8_t *value = NULL;
-
-	PRLOG("GAP Serial Read called\n");
-
-	len = strlen(user_data);
-
-	if (offset > len) {
-		error = BT_ATT_ERROR_INVALID_OFFSET;
-		goto done;
-	}
-
-	len -= offset;
-	value = &user_data[offset];
-
-done:
-	gatt_db_attribute_read_result(attrib, id, error, value, len);
-}
-
 static void populate_gap_service(server_t *server)
 {
 	struct gatt_db_attribute *service, *tmp;
@@ -391,12 +363,6 @@ static void populate_gap_service(server_t *server)
 	gatt_db_service_add_descriptor(service, &uuid, BT_ATT_PERM_READ,
 					gap_device_name_ext_prop_read_cb,
 					NULL, server);
-
-	bt_uuid16_create(&uuid, GATT_CHARAC_SERIAL_NUMBER_STRING);
-	gatt_db_service_add_characteristic(service, &uuid, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_serialno);
-
-	bt_uuid16_create(&uuid, GATT_CHARAC_MANUFACTURER_NAME_STRING);
-	gatt_db_service_add_characteristic(service, &uuid, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_name);
 
 	/*
 	 * Appearance characteristic. Reads and writes should obtain the value
@@ -449,6 +415,9 @@ static void populate_gatt_service(server_t *server)
 
 #define inomatic_serialno_OtpPosition 0x140
 
+char inomatic_serialno[20] = {0};
+char *inomatic_name = "inomatic GmbH";
+
 void readSerial() {
 	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
 	if (fd < 0) {
@@ -474,14 +443,45 @@ void readSerial() {
 	close(fd);
 }
 
+void read_userdata_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data) {
+
+	if (inomatic_serialno[0] == '\0') {
+		readSerial();
+	}
+	
+	uint8_t error = 0;
+	size_t len = 0;
+	const uint8_t *value = NULL;
+
+	PRLOG("GAP Serial Read called\n");
+
+	len = strlen(user_data);
+
+	if (offset > len) {
+		error = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	len -= offset;
+	value = &user_data[offset];
+
+done:
+	gatt_db_attribute_read_result(attrib, id, error, value, len);
+}
+
 static void populate_iotgw_service(server_t *server)
 {
-	//struct gatt_db_attribute *serviceDevInfo;
-	//serviceDevInfo = gatt_db_add_service(server->db, &uuidDeviceInformationService, true, 8);
-	//server->iotgw_devinfo_handle = gatt_db_attribute_get_handle(serviceDevInfo);
-	//gatt_db_service_add_characteristic(serviceDevInfo, &uuidSerial, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_serialno);
-	//gatt_db_service_add_characteristic(serviceDevInfo, &uuidManufacturerName, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_name);
-	//gatt_db_service_set_active(serviceDevInfo, true);
+	struct gatt_db_attribute *serviceDevInfo;
+	serviceDevInfo = gatt_db_add_service(server->db, &uuidDeviceInformationService, true, 8);
+	server->iotgw_devinfo_handle = gatt_db_attribute_get_handle(serviceDevInfo);
+
+	gatt_db_service_add_characteristic(serviceDevInfo, &uuidSerial, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_serialno);
+	gatt_db_service_add_characteristic(serviceDevInfo, &uuidManufacturerName, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_name);
+
+	gatt_db_service_set_active(serviceDevInfo, true);
 
 
 
@@ -790,6 +790,10 @@ int btinit()
 	bt_string_to_uuid(&uuidDataService, BUILDVAR_GWBTSERVICEUUID);
 	bt_string_to_uuid(&uuidReceive, BUILDVAR_GWBTRECEIVEUUID);
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
+
+	bt_uuid16_create(&uuidDeviceInformationService, 0x180A);
+	bt_uuid16_create(&uuidSerial, 0x2A25);
+	bt_uuid16_create(&uuidManufacturerName, 0x2A29);
 
 	/*struct hci_filter flt;
 	hci_filter_clear(&flt);
