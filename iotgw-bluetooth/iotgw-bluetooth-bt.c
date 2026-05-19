@@ -336,6 +336,35 @@ done:
 char inomatic_serialno[20] = {0};
 char *inomatic_name = "inomatic GmbH";
 
+void read_userdata_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data) {
+
+	if (inomatic_serialno[0] == '\0') {
+		readSerial();
+	}
+	
+	uint8_t error = 0;
+	size_t len = 0;
+	const uint8_t *value = NULL;
+
+	PRLOG("GAP Serial Read called\n");
+
+	len = strlen(user_data);
+
+	if (offset > len) {
+		error = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	len -= offset;
+	value = &user_data[offset];
+
+done:
+	gatt_db_attribute_read_result(attrib, id, error, value, len);
+}
+
 static void populate_gap_service(server_t *server)
 {
 	struct gatt_db_attribute *service, *tmp;
@@ -443,35 +472,6 @@ void readSerial() {
 		printf("Could not read inomatic_serialno\n");
 	}
 	close(fd);
-}
-
-void read_userdata_cb(struct gatt_db_attribute *attrib,
-					unsigned int id, uint16_t offset,
-					uint8_t opcode, struct bt_att *att,
-					void *user_data) {
-
-	if (inomatic_serialno[0] == '\0') {
-		readSerial();
-	}
-	
-	uint8_t error = 0;
-	size_t len = 0;
-	const uint8_t *value = NULL;
-
-	PRLOG("GAP Serial Read called\n");
-
-	len = strlen(user_data);
-
-	if (offset > len) {
-		error = BT_ATT_ERROR_INVALID_OFFSET;
-		goto done;
-	}
-
-	len -= offset;
-	value = &user_data[offset];
-
-done:
-	gatt_db_attribute_read_result(attrib, id, error, value, len);
 }
 
 static void populate_iotgw_service(server_t *server)
