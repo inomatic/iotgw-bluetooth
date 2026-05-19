@@ -415,6 +415,9 @@ static void populate_gatt_service(server_t *server)
 
 #define inomatic_serialno_OtpPosition 0x140
 
+char inomatic_serialno[20] = {0};
+char *inomatic_name = "inomatic GmbH";
+
 void readSerial() {
 	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
 	if (fd < 0) {
@@ -439,8 +442,6 @@ void readSerial() {
 	}
 	close(fd);
 }
-char inomatic_serialno[20] = {0};
-char *inomatic_name = "inomatic GmbH";
 
 void read_userdata_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
