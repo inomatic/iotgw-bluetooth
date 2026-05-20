@@ -4,8 +4,6 @@ cd "$(dirname "$0")"
 
 IP=$1
 
-#ssh-keygen -f '/home/alex/.ssh/known_hosts' -R "$IP"
-
 source /opt/dev-tools/oecore-x86_64/environment-setup-cortexa7t2hf-neon-vfpv4-oe-linux-gnueabi
 
 export BUILDVAR_GWBTNAME="Inomatic IoT-Gateway"
@@ -24,6 +22,12 @@ export BUILDVAR_GWBTMQTTUSER="iotgw-bluetooth"
 export BUILDVAR_GWBTMQTTPASSWORD="InoM4t1c_Passw0rd-FOr=Blu3t0th"
 make iotgw-bluetooth
 
+echo "Stopping iotgw-bluetooth"
 ssh -p 22 root@$IP "(systemctl stop iotgw-bluetooth ; killall -9 iotgw-bluetooth ; killall -9 gdbserver) || true"
-scp -P 22 iotgw-bluetooth root@$IP:/usr/bin/
+echo "Stopping avahi-daemon and remount rw"
+ssh -p 22 root@$IP "systemctl stop avahi-daemon.socket ; systemctl stop avahi-daemon ; umount /etc ; mount -n -o remount,rw /"
+echo "Uploading iotgw-bluetooth"
+scp -P 22 iotgw-bluetooth root@$IP:/usr/bin/iotgw-bluetooth
+echo "remount ro and reboot"
+ssh -p 22 root@$IP "mount -n -o remount,ro / ; sync ; sleep 1 ; sync ; reboot"
 echo "Upload done."

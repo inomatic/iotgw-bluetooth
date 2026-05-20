@@ -466,7 +466,7 @@ void read_userdata_cb(struct gatt_db_attribute *attrib,
 	}
 
 	len -= offset;
-	value = &user_data[offset];
+	value = &((char*)user_data)[offset];
 
 done:
 	gatt_db_attribute_read_result(attrib, id, error, value, len);
