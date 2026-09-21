@@ -46,14 +46,20 @@
 bt_uuid_t uuidDeviceGAP;
 bt_uuid_t uuidDeviceGATT;
 bt_uuid_t uuidDataService;
-bt_uuid_t uuidReceive;
+bt_uuid_t uuidReceiveAck;
 bt_uuid_t uuidTransmit;
+bt_uuid_t uuidReceiveNoAck;
 
 bt_uuid_t uuidDeviceInformationService;
 bt_uuid_t uuidSerial;
 bt_uuid_t uuidManufacturerName;
 
 #define ATT_CID 4
+
+#define BLE_CONN_INTERVAL_MIN 6   /* 7.5 ms */
+#define BLE_CONN_INTERVAL_MAX 12  /* 15 ms */
+#define BLE_CONN_LATENCY 0
+#define BLE_CONN_SUPERVISION_TIMEOUT 200 /* 2 s */
 
 #define PRLOG(...) \
 	do { \
@@ -120,6 +126,20 @@ static void restart_hci_advertising() {
 		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX HCI LE Advertising restarted successfully!\n");
 	}
 }
+
+/*static void request_fast_connection(uint16_t handle)
+{
+	int err;
+
+	err = hci_le_conn_update(dev_sock, handle, BLE_CONN_INTERVAL_MIN,
+					BLE_CONN_INTERVAL_MAX, BLE_CONN_LATENCY,
+					BLE_CONN_SUPERVISION_TIMEOUT, 1000);
+	if (err < 0) {
+		fprintf(stderr, "Failed to request fast BLE connection parameters: %s\n",
+								strerror(errno));
+		fflush(stderr);
+	}
+}*/
 
 static void att_disconnect_cb(int err, void *user_data)
 {
@@ -312,6 +332,7 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
+	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
 	server_t *server = user_data;
 	uint8_t ecode = 0;
 
@@ -466,7 +487,7 @@ void read_userdata_cb(struct gatt_db_attribute *attrib,
 	}
 
 	len -= offset;
-	value = &((char*)user_data)[offset];
+	value = &((uint8_t*)user_data)[offset];
 
 done:
 	gatt_db_attribute_read_result(attrib, id, error, value, len);
@@ -502,9 +523,16 @@ static void populate_iotgw_service(server_t *server)
 					iotgw_data_ccc_read_cb,
 					iotgw_data_ccc_write_cb, server);
 
-	gatt_db_service_add_characteristic(serviceData, &uuidReceive,
+	gatt_db_service_add_characteristic(serviceData, &uuidReceiveAck,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE,
+						NULL, iotgw_data_write_cb,
+						server);
+
+	gatt_db_service_add_characteristic(serviceData, &uuidReceiveNoAck,
+						BT_ATT_PERM_WRITE,
+						BT_GATT_CHRC_PROP_WRITE |
+						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
 						NULL, iotgw_data_write_cb,
 						server);
 
@@ -788,8 +816,9 @@ int btinit()
 	bt_uuid16_create(&uuidDeviceGAP, 0x1800);
 	bt_uuid16_create(&uuidDeviceGATT, 0x1801);
 	bt_string_to_uuid(&uuidDataService, BUILDVAR_GWBTSERVICEUUID);
-	bt_string_to_uuid(&uuidReceive, BUILDVAR_GWBTRECEIVEUUID);
+	bt_string_to_uuid(&uuidReceiveAck, BUILDVAR_GWBTRECEIVEACKUUID);
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
+	bt_string_to_uuid(&uuidReceiveNoAck, BUILDVAR_GWBTRECEIVENOACKUUID);
 
 	bt_uuid16_create(&uuidDeviceInformationService, 0x180A);
 	bt_uuid16_create(&uuidSerial, 0x2A25);
@@ -856,7 +885,9 @@ int btloop() {
 							evt_le_connection_complete *cc = (evt_le_connection_complete *)(meta->data);
 							
 							if (cc->status == 0) { // 0 means success
-									printf("Client Connected! Handle: 0x%04X\n", cc->handle);
+									uint16_t handle = btohs(cc->handle);
+									printf("Client Connected! Handle: 0x%04X\n", handle);
+									//request_fast_connection(handle);
 									advertising = false;
 									restart_hci_advertising();
 							}

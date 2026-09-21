@@ -65,7 +65,9 @@ extern "C"
 
   void receivedBtPacket(const uint8_t *value, size_t len)
   {
-    mqttpublishbinary(BUILDVAR_GWBTBTBTFRAME, value, len);
+    if (!mqttpublishbinary(BUILDVAR_GWBTBTBTFRAME, value, len)) {
+      printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
+    }
   }
 
   static void intHandler(int /*signum*/)
