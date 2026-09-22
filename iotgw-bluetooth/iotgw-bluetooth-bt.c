@@ -49,6 +49,7 @@ bt_uuid_t uuidDataService;
 bt_uuid_t uuidReceiveAck;
 bt_uuid_t uuidTransmit;
 bt_uuid_t uuidReceiveNoAck;
+bt_uuid_t uuidReceiveChaCha20Poly1305AEAD;
 
 bt_uuid_t uuidDeviceInformationService;
 bt_uuid_t uuidSerial;
@@ -77,6 +78,7 @@ bt_uuid_t uuidManufacturerName;
 #define COLOR_BOLDGRAY	"\x1B[1;30m"
 #define COLOR_BOLDWHITE	"\x1B[1;37m"
 
+extern void receivedBtChacha20Poly1305AEADPacket(const uint8_t *value, size_t len);
 extern void receivedBtPacket(const uint8_t *value, size_t len);
 
 int dev_id;
@@ -326,6 +328,38 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
+static void iotgw_data_write__chacha20poly1305aead_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					const uint8_t *value, size_t len,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data)
+{
+	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
+	server_t *server = user_data;
+	uint8_t ecode = 0;
+
+	if (!value) {
+		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+		goto done;
+	}
+
+	if (offset) {
+		ecode = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] == server) {
+			g_servers[i]->lastReceivedBtPacketTime = time(NULL);
+		}
+	}
+
+	receivedBtChacha20Poly1305AEADPacket(value, len);
+
+done:
+	gatt_db_attribute_write_result(attrib, id, ecode);
+}
+
 static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
@@ -511,6 +545,7 @@ static void populate_iotgw_service(server_t *server)
 	struct gatt_db_attribute *iotgw_data_ccc = {0};
 	struct gatt_db_attribute *iotgw_receive_ack = {0};
 	struct gatt_db_attribute *iotgw_receive_no_ack = {0};
+	struct gatt_db_attribute *iotgw_receive_chacha20poly1305aead = {0};
 
 	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 8);
 	if (serviceData == NULL) {
@@ -564,6 +599,18 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_receive_no_ack == NULL) {
 		fprintf(stderr, "Failed to add iotgw_receive_no_ack characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+
+	iotgw_receive_chacha20poly1305aead = gatt_db_service_add_characteristic(serviceData, &uuidReceiveChaCha20Poly1305AEAD,
+						BT_ATT_PERM_WRITE,
+						BT_GATT_CHRC_PROP_WRITE |
+						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
+						NULL, iotgw_data_write__chacha20poly1305aead_cb,
+						server);
+
+	if (iotgw_receive_chacha20poly1305aead == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_chacha20poly1305aead characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
 		exit(1);
 	}
 
@@ -850,6 +897,7 @@ int btinit()
 	bt_string_to_uuid(&uuidReceiveAck, BUILDVAR_GWBTRECEIVEACKUUID);
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
 	bt_string_to_uuid(&uuidReceiveNoAck, BUILDVAR_GWBTRECEIVENOACKUUID);
+	bt_string_to_uuid(&uuidReceiveChaCha20Poly1305AEAD, BUILDVAR_GWBTRECEIVECHACHA20POLY1305AEADUUID);
 
 	bt_uuid16_create(&uuidDeviceInformationService, 0x180A);
 	bt_uuid16_create(&uuidSerial, 0x2A25);

@@ -70,6 +70,13 @@ extern "C"
     }
   }
 
+  void receivedBtChacha20Poly1305AEADPacket(const uint8_t *value, size_t len)
+  {
+    if (!mqttpublishbinary(BUILDVAR_GWBTBTBTCHACHA20POLY1305AEADFRAME, value, len)) {
+      printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
+    }
+  }
+
   static void intHandler(int /*signum*/)
   {
     g_quit = true;
