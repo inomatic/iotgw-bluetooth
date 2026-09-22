@@ -28,6 +28,27 @@
           "ignoreFailures": true
         }
       ]
+    },
+    {
+      "name": "Remote Debug",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "./iotgw-bluetooth/iotgw-bluetooth",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/opt/dev-tools/oecore-x86_64/sysroots/x86_64-oesdk-linux/usr/bin/arm-oe-linux/arm-oe-linux-gdb",
+      "miDebuggerServerAddress": "198.51.100.1:1234",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
     }
   ]
 }
