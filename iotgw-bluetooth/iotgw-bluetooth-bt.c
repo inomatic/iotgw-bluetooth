@@ -506,35 +506,66 @@ static void populate_iotgw_service(server_t *server)
 
 
 
-	struct gatt_db_attribute *serviceData, *iotgw_data;
+	struct gatt_db_attribute *serviceData = {0};
+	struct gatt_db_attribute *iotgw_data = {0};
+	struct gatt_db_attribute *iotgw_data_ccc = {0};
+	struct gatt_db_attribute *iotgw_receive_ack = {0};
+	struct gatt_db_attribute *iotgw_receive_no_ack = {0};
+
 	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 8);
+	if (serviceData == NULL) {
+		fprintf(stderr, "Failed to add serviceData service !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
 	server->iotgw_dataservice_handle = gatt_db_attribute_get_handle(serviceData);
 
 	iotgw_data = gatt_db_service_add_characteristic(serviceData, &uuidTransmit,
 						BT_ATT_PERM_NONE,
 						BT_GATT_CHRC_PROP_NOTIFY,
 						NULL, NULL, NULL);
+
+	if (iotgw_data == NULL) {
+		fprintf(stderr, "Failed to add iotgw_data characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
 	server->iotgw_data_handle = gatt_db_attribute_get_handle(iotgw_data);
 
 	bt_uuid_t uuid1;
 	bt_uuid16_create(&uuid1, GATT_CLIENT_CHARAC_CFG_UUID);
-	gatt_db_service_add_descriptor(serviceData, &uuid1,
+
+
+	iotgw_data_ccc = gatt_db_service_add_descriptor(serviceData, &uuid1,
 					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
 					iotgw_data_ccc_read_cb,
 					iotgw_data_ccc_write_cb, server);
 
-	gatt_db_service_add_characteristic(serviceData, &uuidReceiveAck,
+	if (iotgw_data_ccc == NULL) {
+		fprintf(stderr, "Failed to add iotgw_data_ccc descriptor !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+
+	iotgw_receive_ack = gatt_db_service_add_characteristic(serviceData, &uuidReceiveAck,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE,
 						NULL, iotgw_data_write_cb,
 						server);
 
-	gatt_db_service_add_characteristic(serviceData, &uuidReceiveNoAck,
+	if (iotgw_receive_ack == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_ack characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+
+	iotgw_receive_no_ack = gatt_db_service_add_characteristic(serviceData, &uuidReceiveNoAck,
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE |
 						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
 						NULL, iotgw_data_write_cb,
 						server);
+
+	if (iotgw_receive_no_ack == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_no_ack characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
 
 	gatt_db_service_set_active(serviceData, true);
 }
