@@ -328,7 +328,7 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
-static void iotgw_data_write__chacha20poly1305aead_cb(struct gatt_db_attribute *attrib,
+static void iotgw_data_write_chacha20poly1305aead_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
 					uint8_t opcode, struct bt_att *att,
@@ -547,7 +547,7 @@ static void populate_iotgw_service(server_t *server)
 	struct gatt_db_attribute *iotgw_receive_no_ack = {0};
 	struct gatt_db_attribute *iotgw_receive_chacha20poly1305aead = {0};
 
-	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 8);
+	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 10);
 	if (serviceData == NULL) {
 		fprintf(stderr, "Failed to add serviceData service !!!!!!!!!!!!!!!!!!!!!!!\n");
 		exit(1);
@@ -606,7 +606,7 @@ static void populate_iotgw_service(server_t *server)
 						BT_ATT_PERM_WRITE,
 						BT_GATT_CHRC_PROP_WRITE |
 						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
-						NULL, iotgw_data_write__chacha20poly1305aead_cb,
+						NULL, iotgw_data_write_chacha20poly1305aead_cb,
 						server);
 
 	if (iotgw_receive_chacha20poly1305aead == NULL) {
