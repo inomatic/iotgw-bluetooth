@@ -27,6 +27,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <sys/stat.h>
+#include <math.h>
 
 #include "lib/bluetooth.h"
 #include "lib/hci.h"
@@ -115,17 +116,35 @@ pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(uint8_t i);
-bool advertising = false;
+static bool advertising = false;
+static uint32_t uiBtActual = 0x06;
+uint32_t uiBtSetpoint = 0x06;
 
 static void restart_hci_advertising() {
 	uint8_t adv_enable = 1;
 	int timeout = 1000;
-	uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
-	if (res != 0) {
-		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX Failed to enable LE advertising %d %d\n", res, errno);
-	} else {
-		advertising = true;
-		printf("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX HCI LE Advertising restarted successfully!\n");
+	if (!advertising && (uiBtActual & 4) == 4) {
+		uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
+		if (res != 0) {
+			fprintf(stderr, "XXXXXXXXXXX Failed to enable LE advertising %d %d\n", res, errno);
+			fflush(stderr);
+		} else {
+			advertising = true;
+			fprintf(stderr, "HCI LE Advertising restarted successfully!\n");
+			fflush(stderr);
+		}
+	} else if (advertising && (uiBtActual & 4) != 4) {
+		uint8_t adv_enable = 0;
+		int timeout = 1000;
+		uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
+		if (res != 0) {
+			fprintf(stderr, "XXXXXXXXXXX Failed to disable LE advertising %d %d\n", res, errno);
+			fflush(stderr);
+		} else {
+			advertising = false;
+			fprintf(stderr, "HCI LE Advertising stopped successfully!\n");
+			fflush(stderr);
+		}
 	}
 }
 
@@ -811,19 +830,52 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 	return sockConn;
 }
 
+uint64_t getMicroSecs() {
+	long            ms;
+	uint64_t        s;
+	struct timespec spec;
+	clock_gettime(CLOCK_MONOTONIC, &spec);
+
+	s  = spec.tv_sec;
+	ms = round(spec.tv_nsec / 1000);
+	if (ms > 999999) {
+			s++;
+			ms = 0;
+	}
+
+	return s * 1000000 + ms;
+}
+
+
 void sendBtNotification(const uint8_t *value, size_t length) {
-	pthread_mutex_lock(&g_server_lock);
+	static uint64_t uiLastSentUs = 0;
 	for(uint8_t i = 0; i < MaxServers; i++) {
+		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->iotgw_data_enabled) {
-				if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle, value, length, false)) {
-					fprintf(stderr,"Failed to initiate notification\n");
-					fflush(stderr);
+
+				int64_t diff = getMicroSecs() - uiLastSentUs;
+				if (diff > 100 && diff <= 20000) {
+					pthread_mutex_unlock(&g_server_lock);
+					//fprintf(stderr, "Delaying for next packet: %lld us !!!\n", diff);
+					//fflush(stderr);
+					usleep(diff);
+					pthread_mutex_lock(&g_server_lock);
+				}
+
+				if (g_servers[i] != NULL) {
+					if (g_servers[i]->iotgw_data_enabled) {
+						if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle, value, length, false)) {
+							fprintf(stderr,"Failed to initiate notification\n");
+							fflush(stderr);
+						}
+						uiLastSentUs = getMicroSecs();
+					}
 				}
 			}
 		}
+		pthread_mutex_unlock(&g_server_lock);
 	}
-	pthread_mutex_unlock(&g_server_lock);
 }
 
 char btaddr[19];
@@ -928,6 +980,30 @@ int btinit()
 bool bHwaddrSent = false;
 
 int btloop() {
+	if (uiBtSetpoint != uiBtActual) {
+		if ((uiBtSetpoint & 2) == 2) {
+			if ((uiBtActual & 2) != 2) {
+				printf("Bluetooth state turning on\n");
+				//system("/usr/bin/systemctl start bluetooth");
+				uiBtActual |= 2;
+			}
+		} else {
+			if ((uiBtActual & 2) == 2) {
+				printf("Bluetooth state turning off\n");
+				//system("/usr/bin/systemctl stop bluetooth");
+				uiBtActual &= ~2;
+			}
+		}
+
+		if ((uiBtSetpoint & 4) == 4) {
+			uiBtActual |= 4;
+		} else {
+			uiBtActual &= ~4;
+		}
+	}
+
+	restart_hci_advertising();
+
 	unsigned char buf[HCI_MAX_EVENT_SIZE];
 	struct pollfd fds[1];
 	fds[0].fd = dev_sock;
@@ -968,7 +1044,6 @@ int btloop() {
 									printf("Client Connected! Handle: 0x%04X\n", handle);
 									//request_fast_connection(handle);
 									advertising = false;
-									restart_hci_advertising();
 							}
 					}
 			} 
@@ -977,9 +1052,6 @@ int btloop() {
 					
 					if (dc->status == 0) {
 							printf("Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
-							if (!advertising) {
-								restart_hci_advertising();
-							}
 					}
 			}
 		}
@@ -1031,14 +1103,13 @@ int btloop() {
 			for(uint8_t i = 0; i < MaxServers; i++) {
 				if (g_servers[i] == NULL) {
 					g_servers[i] = server;
+					g_servers[i]->lastReceivedBtPacketTime = time(NULL);
 					break;
 				}
 			}
 			pthread_mutex_unlock(&g_server_lock);
 
-			fprintf(stderr,"Running GATT server\n");
-
-			restart_hci_advertising();
+			advertising = false;
 		}
 	}
 

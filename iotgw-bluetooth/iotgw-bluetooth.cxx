@@ -49,11 +49,16 @@ extern "C"
     mqttsubscribe("#", 2);
   }
 
+extern uint32_t uiBtSetpoint;
+extern uint32_t uiBtActual;
+
   static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_t len)
   {
     if (strcmp(topic, BUILDVAR_GWBTBTGWFRAME) == 0)
     {
       sendBtNotification(bytes, len);
+    } else if (strcmp(topic, BUILDVAR_GWBTBTGWSETPOINT) == 0) {
+      uiBtSetpoint = atoi((const char *)bytes) & 0x06;
     }
   }
 
