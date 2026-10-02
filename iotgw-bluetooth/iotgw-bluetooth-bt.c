@@ -116,32 +116,34 @@ pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(uint8_t i);
-static bool advertising = false;
+static int advertising = 5;
 static uint32_t uiBtActual = 0x06;
 uint32_t uiBtSetpoint = 0x06;
 
 static void restart_hci_advertising() {
 	uint8_t adv_enable = 1;
 	int timeout = 1000;
-	if (!advertising && (uiBtActual & 4) == 4) {
+	if (advertising > 1 && (uiBtActual & 4) == 4) {
 		uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
 		if (res != 0) {
-			fprintf(stderr, "XXXXXXXXXXX Failed to enable LE advertising %d %d\n", res, errno);
+			fprintf(stderr, "Failed to enable LE advertising %d %d %d\n", res, errno, advertising);
 			fflush(stderr);
+			advertising--;
+			sleep(1);
 		} else {
-			advertising = true;
 			fprintf(stderr, "HCI LE Advertising restarted successfully!\n");
 			fflush(stderr);
+			advertising = 1;
 		}
-	} else if (advertising && (uiBtActual & 4) != 4) {
+	} else if (advertising > 0 && (uiBtActual & 4) != 4) {
 		uint8_t adv_enable = 0;
 		int timeout = 1000;
 		uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
+		advertising = 0;
 		if (res != 0) {
-			fprintf(stderr, "XXXXXXXXXXX Failed to disable LE advertising %d %d\n", res, errno);
+			fprintf(stderr, "Failed to disable LE advertising %d %d\n", res, errno);
 			fflush(stderr);
 		} else {
-			advertising = false;
 			fprintf(stderr, "HCI LE Advertising stopped successfully!\n");
 			fflush(stderr);
 		}
@@ -166,6 +168,8 @@ static void att_disconnect_cb(int err, void *user_data)
 {
 	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
 	fflush(stderr);
+
+	advertising = 5;
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 
@@ -1043,7 +1047,7 @@ int btloop() {
 									uint16_t handle = btohs(cc->handle);
 									printf("Client Connected! Handle: 0x%04X\n", handle);
 									//request_fast_connection(handle);
-									advertising = false;
+									advertising = 2;
 							}
 					}
 			} 
@@ -1052,6 +1056,7 @@ int btloop() {
 					
 					if (dc->status == 0) {
 							printf("Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
+							advertising = 2;
 					}
 			}
 		}
@@ -1109,7 +1114,7 @@ int btloop() {
 			}
 			pthread_mutex_unlock(&g_server_lock);
 
-			advertising = false;
+			advertising = 2;
 		}
 	}
 

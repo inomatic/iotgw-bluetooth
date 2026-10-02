@@ -102,7 +102,6 @@ extern uint32_t uiBtActual;
 
     atexit(exit_handler);
 
-
     mqttinit(BUILDVAR_GWBTCLIENTID, mqtt_message_callback, mqtt_connected_callback);
 
     int i = btinit();
