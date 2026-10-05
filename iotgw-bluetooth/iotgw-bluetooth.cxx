@@ -102,12 +102,22 @@ extern uint32_t uiBtActual;
 
     atexit(exit_handler);
 
+    system("/usr/bin/iotgw-bluetooth-init");
+
     mqttinit(BUILDVAR_GWBTCLIENTID, mqtt_message_callback, mqtt_connected_callback);
 
-    int i = btinit();
+    int i;
+    for(uint8_t j = 0; j < 5; j++) {
+      i = btinit();
+      if (i == EXIT_SUCCESS) {
+        printf("Bluetooth initialized successfully on attempt %d/5\n", j+1);
+        break;
+      }
+      printf("Bluetooth failed to initialize %d/5\n", j+1);
+      sleep(1);
+    }
     if (i != EXIT_SUCCESS)
     {
-      printf("Bluetooth failed to initialize\n");
       return i;
     }
 
