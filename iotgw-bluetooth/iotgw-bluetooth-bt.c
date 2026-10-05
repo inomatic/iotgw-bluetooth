@@ -150,6 +150,28 @@ static void restart_hci_advertising() {
 	}
 }
 
+uint32_t HAL_GetTick() {
+	long            ms;
+	time_t          s;
+	struct timespec spec;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &spec);
+
+	s  = spec.tv_sec;
+	ms = round(spec.tv_nsec / 1.0e6); // Convert nanoseconds to milliseconds
+	if (ms > 999) {
+			s++;
+			ms = 0;
+	}
+
+	return s * 1000 + ms;
+}
+
+uint32_t HAL_GetSeconds() {
+	struct timespec spec;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &spec);
+	return spec.tv_sec;
+}
+
 /*static void request_fast_connection(uint16_t handle)
 {
 	int err;
@@ -373,7 +395,7 @@ static void iotgw_data_write_chacha20poly1305aead_cb(struct gatt_db_attribute *a
 
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		if (g_servers[i] == server) {
-			g_servers[i]->lastReceivedBtPacketTime = time(NULL);
+			g_servers[i]->lastReceivedBtPacketTime = HAL_GetSeconds();
 		}
 	}
 
@@ -405,7 +427,7 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		if (g_servers[i] == server) {
-			g_servers[i]->lastReceivedBtPacketTime = time(NULL);
+			g_servers[i]->lastReceivedBtPacketTime = HAL_GetSeconds();
 		}
 	}
 
@@ -838,7 +860,7 @@ uint64_t getMicroSecs() {
 	long            ms;
 	uint64_t        s;
 	struct timespec spec;
-	clock_gettime(CLOCK_MONOTONIC, &spec);
+	clock_gettime(CLOCK_MONOTONIC_RAW, &spec);
 
 	s  = spec.tv_sec;
 	ms = round(spec.tv_nsec / 1000);
@@ -1108,7 +1130,7 @@ int btloop() {
 			for(uint8_t i = 0; i < MaxServers; i++) {
 				if (g_servers[i] == NULL) {
 					g_servers[i] = server;
-					g_servers[i]->lastReceivedBtPacketTime = time(NULL);
+					g_servers[i]->lastReceivedBtPacketTime = HAL_GetSeconds();
 					break;
 				}
 			}
@@ -1121,7 +1143,7 @@ int btloop() {
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
-			if (g_servers[i]->lastReceivedBtPacketTime != 0 && time(NULL) - g_servers[i]->lastReceivedBtPacketTime > 20) {
+			if (g_servers[i]->lastReceivedBtPacketTime != 0 && HAL_GetSeconds() - g_servers[i]->lastReceivedBtPacketTime > 20) {
 				fprintf(stderr,"No data received for 20 seconds, disconnecting\n");
 				fflush(stderr);
 
