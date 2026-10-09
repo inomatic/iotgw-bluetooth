@@ -13,7 +13,6 @@
 #include <config.h>
 #endif
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -44,6 +43,12 @@
 
 #include "mosquitto/mqttclient.h"
 
+const bdaddr_t bdaddr_any = {{0, 0, 0, 0, 0, 0}};
+const bdaddr_t bdaddr_all = {{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
+const bdaddr_t bdaddr_local = {{0, 0, 0, 0xff, 0xff, 0xff}};
+
+#include "iotgw-bluetooth-bt.h"
+
 bt_uuid_t uuidDeviceGAP;
 bt_uuid_t uuidDeviceGATT;
 bt_uuid_t uuidDataService;
@@ -51,6 +56,9 @@ bt_uuid_t uuidReceiveAck;
 bt_uuid_t uuidTransmit;
 bt_uuid_t uuidReceiveNoAck;
 bt_uuid_t uuidReceiveChaCha20Poly1305AEAD;
+
+bt_uuid_t uuidReceiveC20Rx;
+bt_uuid_t uuidReceiveC20Tx;
 
 bt_uuid_t uuidDeviceInformationService;
 bt_uuid_t uuidSerial;
@@ -79,43 +87,17 @@ bt_uuid_t uuidManufacturerName;
 #define COLOR_BOLDGRAY	"\x1B[1;30m"
 #define COLOR_BOLDWHITE	"\x1B[1;37m"
 
-extern void receivedBtChacha20Poly1305AEADPacket(const uint8_t *value, size_t len);
-extern void receivedBtPacket(const uint8_t *value, size_t len);
-
 int dev_id;
 int dev_sock;
 
 static const char device_name[] = BUILDVAR_GWBTNAME;
 static bool verbose = true;
 
-typedef struct {
-	time_t lastReceivedBtPacketTime;
-
-	int fd;
-	struct bt_att *att;
-	struct gatt_db *db;
-	struct bt_gatt_server *gatt;
-
-	uint8_t *device_name;
-	size_t name_len;
-
-	uint16_t gatt_svc_chngd_handle;
-	bool svc_chngd_enabled;
-
-	uint16_t iotgw_dataservice_handle;
-	uint16_t iotgw_data_handle;
-
-	uint16_t iotgw_devinfo_handle;
-	bool iotgw_data_enabled;
-} server_t;
-
-#define MaxServers 5
-
 server_t* g_servers[MaxServers] = {0};
 pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
-static void server_destroy(uint8_t i);
+static void server_destroy(server_t *server, uint8_t i);
 static int advertising = 5;
 static uint32_t uiBtActual = 0x06;
 uint32_t uiBtSetpoint = 0x06;
@@ -199,14 +181,14 @@ static void att_disconnect_cb(int err, void *user_data)
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		if (g_servers[i] == server) {
 			g_servers[i]->lastReceivedBtPacketTime = 0;
+			server_destroy(g_servers[i], i);
 		}
-		server_destroy(i);
 	}
 }
 
 static void att_debug_cb(const char *str, void *user_data)
 {
-	const char *prefix = user_data;
+	const char *prefix = (const char *)(user_data);
 
 	PRLOG(COLOR_BOLDGRAY "%s" COLOR_BOLDWHITE "%s\n" COLOR_OFF, prefix,
 									str);
@@ -214,7 +196,7 @@ static void att_debug_cb(const char *str, void *user_data)
 
 static void gatt_debug_cb(const char *str, void *user_data)
 {
-	const char *prefix = user_data;
+	const char *prefix = (const char *)(user_data);
 
 	PRLOG(COLOR_GREEN "%s%s\n" COLOR_OFF, prefix, str);
 }
@@ -224,7 +206,7 @@ static void gap_device_name_read_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t error = 0;
 	size_t len = 0;
 	const uint8_t *value = NULL;
@@ -275,7 +257,7 @@ static void gatt_svc_chngd_ccc_read_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t value[2];
 
 	PRLOG("Service Changed CCC Read called\n");
@@ -292,7 +274,7 @@ static void gatt_svc_chngd_ccc_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t ecode = 0;
 
 	PRLOG("Service Changed CCC Write called\n");
@@ -326,7 +308,7 @@ static void iotgw_data_ccc_read_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t value[2];
 
 	value[0] = server->iotgw_data_enabled ? 0x01 : 0x00;
@@ -341,7 +323,7 @@ static void iotgw_data_ccc_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t ecode = 0;
 
 	if (!value || len != 2) {
@@ -380,7 +362,7 @@ static void iotgw_data_write_chacha20poly1305aead_cb(struct gatt_db_attribute *a
 					void *user_data)
 {
 	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t ecode = 0;
 
 	if (!value) {
@@ -405,6 +387,39 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
+static void iotgw_data_write_c20_rx_cb(struct gatt_db_attribute *attrib,
+					unsigned int id, uint16_t offset,
+					const uint8_t *value, size_t len,
+					uint8_t opcode, struct bt_att *att,
+					void *user_data)
+{
+	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
+	server_t *server = (server_t *)(user_data);
+	uint8_t ecode = 0;
+
+	if (!value) {
+		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
+		goto done;
+	}
+
+	if (offset) {
+		ecode = BT_ATT_ERROR_INVALID_OFFSET;
+		goto done;
+	}
+
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		if (g_servers[i] == server) {
+			server->lastReceivedBtPacketTime = HAL_GetSeconds();
+			server->c20_enabled = true;
+			receivedBtC20PacketRx(value, len, server);
+			break;
+		}
+	}
+
+done:
+	gatt_db_attribute_write_result(attrib, id, ecode);
+}
+
 static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
@@ -412,7 +427,7 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 					void *user_data)
 {
 	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
-	server_t *server = user_data;
+	server_t *server = (server_t *)(user_data);
 	uint8_t ecode = 0;
 
 	if (!value) {
@@ -479,7 +494,7 @@ static void populate_gap_service(server_t *server)
 	 * callback.
 	 */
 	put_le16(128, &appearance);
-	gatt_db_attribute_write(tmp, 0, (void *) &appearance,
+	gatt_db_attribute_write(tmp, 0, (uint8_t *) &appearance,
 							sizeof(appearance),
 							BT_ATT_OP_WRITE_REQ,
 							NULL, NULL,
@@ -515,8 +530,8 @@ static void populate_gatt_service(server_t *server)
 
 #define inomatic_serialno_OtpPosition 0x140
 
-char inomatic_serialno[20] = {0};
-char *inomatic_name = "inomatic GmbH";
+static char inomatic_serialno[20] = {0};
+static char *inomatic_name = "inomatic GmbH";
 
 void readSerial() {
 	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
@@ -558,7 +573,7 @@ void read_userdata_cb(struct gatt_db_attribute *attrib,
 
 	PRLOG("GAP Serial Read called\n");
 
-	len = strlen(user_data);
+	len = strlen((char *)user_data);
 
 	if (offset > len) {
 		error = BT_ATT_ERROR_INVALID_OFFSET;
@@ -579,7 +594,7 @@ static void populate_iotgw_service(server_t *server)
 	server->iotgw_devinfo_handle = gatt_db_attribute_get_handle(serviceDevInfo);
 
 	gatt_db_service_add_characteristic(serviceDevInfo, &uuidSerial, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_serialno);
-	gatt_db_service_add_characteristic(serviceDevInfo, &uuidManufacturerName, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, inomatic_name);
+	gatt_db_service_add_characteristic(serviceDevInfo, &uuidManufacturerName, BT_ATT_PERM_READ, BT_GATT_CHRC_PROP_READ, read_userdata_cb, NULL, (void*)inomatic_name);
 
 	gatt_db_service_set_active(serviceDevInfo, true);
 
@@ -591,8 +606,10 @@ static void populate_iotgw_service(server_t *server)
 	struct gatt_db_attribute *iotgw_receive_ack = {0};
 	struct gatt_db_attribute *iotgw_receive_no_ack = {0};
 	struct gatt_db_attribute *iotgw_receive_chacha20poly1305aead = {0};
+	struct gatt_db_attribute *iotgw_receive_c20_rx = {0};
+	struct gatt_db_attribute *iotgw_receive_c20_tx = {0};
 
-	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 10);
+	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 14);
 	if (serviceData == NULL) {
 		fprintf(stderr, "Failed to add serviceData service !!!!!!!!!!!!!!!!!!!!!!!\n");
 		exit(1);
@@ -608,7 +625,7 @@ static void populate_iotgw_service(server_t *server)
 		fprintf(stderr, "Failed to add iotgw_data characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
 		exit(1);
 	}
-	server->iotgw_data_handle = gatt_db_attribute_get_handle(iotgw_data);
+	server->iotgw_data_handle_aes256 = gatt_db_attribute_get_handle(iotgw_data);
 
 	bt_uuid_t uuid1;
 	bt_uuid16_create(&uuid1, GATT_CLIENT_CHARAC_CFG_UUID);
@@ -659,6 +676,29 @@ static void populate_iotgw_service(server_t *server)
 		exit(1);
 	}
 
+	iotgw_receive_c20_rx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Rx,
+						BT_ATT_PERM_WRITE,
+						BT_GATT_CHRC_PROP_WRITE |
+						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
+						NULL, iotgw_data_write_c20_rx_cb,
+						server);
+
+	if (iotgw_receive_c20_rx == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_c20_rx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+
+	iotgw_receive_c20_tx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Tx,
+						BT_ATT_PERM_NONE,
+						BT_GATT_CHRC_PROP_NOTIFY,
+						NULL, NULL, NULL);
+
+	if (iotgw_receive_c20_tx == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_c20_tx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+	server->iotgw_data_handle_c20_tx = gatt_db_attribute_get_handle(iotgw_receive_c20_tx);
+
 	gatt_db_service_set_active(serviceData, true);
 }
 
@@ -669,6 +709,7 @@ static void populate_db(server_t *server)
 	populate_iotgw_service(server);
 }
 
+static uint64_t serverid = 1;
 static server_t *server_create(int fd, uint16_t mtu)
 {
 	server_t *server;
@@ -679,6 +720,8 @@ static server_t *server_create(int fd, uint16_t mtu)
 		fprintf(stderr, "Failed to allocate memory for server\n");
 		return NULL;
 	}
+
+	server->serverid = serverid++;
 
 	server->att = bt_att_new(fd, false);
 	if (!server->att) {
@@ -743,42 +786,28 @@ fail:
 	return NULL;
 }
 
-static void server_destroy(uint8_t i)
+static void server_destroy(server_t *server, uint8_t i)
 {
 	pthread_mutex_lock(&g_server_lock);
-	if (g_servers[i] != NULL) {
-		if (g_servers[i]->fd >= 0) {
-			close(g_servers[i]->fd);
-			g_servers[i]->fd = -1;
+	if (server != NULL) {
+		if (server->fd >= 0) {
+			close(server->fd);
+			server->fd = -1;
 		}
-		bt_gatt_server_unref(g_servers[i]->gatt);
-		gatt_db_unref(g_servers[i]->db);
-		free(g_servers[i]->device_name);
-		bt_att_unref(g_servers[i]->att);
-		free(g_servers[i]);
-		g_servers[i] = NULL;
+		bt_gatt_server_unref(server->gatt);
+		gatt_db_unref(server->db);
+		bt_att_unref(server->att);
+		free(server);
 	}
+	g_servers[i] = NULL;
 	pthread_mutex_unlock(&g_server_lock);
 }
 
 void servers_destroy()
 {
-	pthread_mutex_lock(&g_server_lock);
 	for(uint8_t i = 0; i < MaxServers; i++) {
-		if (g_servers[i] != NULL) {
-			if (g_servers[i]->fd >= 0) {
-				close(g_servers[i]->fd);
-				g_servers[i]->fd = -1;
-			}
-			bt_gatt_server_unref(g_servers[i]->gatt);
-			gatt_db_unref(g_servers[i]->db);
-			free(g_servers[i]->device_name);
-			bt_att_unref(g_servers[i]->att);
-			free(g_servers[i]);
-			g_servers[i] = NULL;
-		}
+		server_destroy(g_servers[i], i);
 	}
-	pthread_mutex_unlock(&g_server_lock);
 }
 
 static int sockL2CAP = -1;
@@ -891,11 +920,44 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 
 				if (g_servers[i] != NULL) {
 					if (g_servers[i]->iotgw_data_enabled) {
-						if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle, value, length, false)) {
+						if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle_aes256, value, length, false)) {
 							fprintf(stderr,"Failed to initiate notification\n");
 							fflush(stderr);
 						}
 						uiLastSentUs = getMicroSecs();
+					}
+				}
+			}
+		}
+		pthread_mutex_unlock(&g_server_lock);
+	}
+}
+
+void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t serverid) {
+	static uint64_t uiLastSentUs = 0;
+	for(uint8_t i = 0; i < MaxServers; i++) {
+		pthread_mutex_lock(&g_server_lock);
+		if (g_servers[i] != NULL) {
+			if (g_servers[i]->serverid == serverid) {
+				if (g_servers[i]->iotgw_data_enabled) {
+
+					int64_t diff = getMicroSecs() - uiLastSentUs;
+					if (diff > 100 && diff <= 20000) {
+						pthread_mutex_unlock(&g_server_lock);
+						//fprintf(stderr, "Delaying for next packet: %lld us !!!\n", diff);
+						//fflush(stderr);
+						usleep(diff);
+						pthread_mutex_lock(&g_server_lock);
+					}
+
+					if (g_servers[i] != NULL) {
+						if (g_servers[i]->iotgw_data_enabled) {
+							if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle_aes256, value, length, false)) {
+								fprintf(stderr,"Failed to initiate notification\n");
+								fflush(stderr);
+							}
+							uiLastSentUs = getMicroSecs();
+						}
 					}
 				}
 			}
@@ -976,6 +1038,8 @@ int btinit()
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
 	bt_string_to_uuid(&uuidReceiveNoAck, BUILDVAR_GWBTRECEIVENOACKUUID);
 	bt_string_to_uuid(&uuidReceiveChaCha20Poly1305AEAD, BUILDVAR_GWBTRECEIVECHACHA20POLY1305AEADUUID);
+	bt_string_to_uuid(&uuidReceiveC20Tx, BUILDVAR_GWBT_C20_TX_UUID);
+	bt_string_to_uuid(&uuidReceiveC20Rx, BUILDVAR_GWBT_C20_RX_UUID);
 
 	bt_uuid16_create(&uuidDeviceInformationService, 0x180A);
 	bt_uuid16_create(&uuidSerial, 0x2A25);
@@ -1151,7 +1215,7 @@ int btloop() {
 				close(g_servers[i]->fd);
 				g_servers[i]->fd = -1;
 				g_servers[i]->lastReceivedBtPacketTime = 0;
-				server_destroy(i);
+				server_destroy(g_servers[i], i);
 			}
 		}
 		pthread_mutex_unlock(&g_server_lock);

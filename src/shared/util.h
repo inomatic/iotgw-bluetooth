@@ -218,14 +218,14 @@ static inline uint16_t get_be16(const void *ptr)
 
 static inline uint32_t get_le24(const void *ptr)
 {
-	const uint8_t *src = ptr;
+	const uint8_t *src = (uint8_t *)(ptr);
 
 	return ((uint32_t)src[2] << 16) | get_le16(ptr);
 }
 
 static inline uint32_t get_be24(const void *ptr)
 {
-	const uint8_t *src = ptr;
+	const uint8_t *src = (const uint8_t *)(ptr);
 
 	return ((uint32_t)src[0] << 16) | get_be16(&src[1]);
 }
@@ -267,14 +267,14 @@ static inline void put_be16(uint16_t val, const void *ptr)
 
 static inline void put_le24(uint32_t val, void *ptr)
 {
-	put_le16(val, ptr);
-	put_unaligned(val >> 16, (uint8_t *) ptr + 2);
+	put_le16(val, (uint8_t *)(ptr));
+	put_unaligned(val >> 16, (uint8_t *)(ptr) + 2);
 }
 
 static inline void put_be24(uint32_t val, void *ptr)
 {
-	put_unaligned(val >> 16, (uint8_t *) ptr + 2);
-	put_be16(val, ptr + 1);
+	put_unaligned(val >> 16, (uint8_t *)(ptr) + 2);
+	put_be16(val, (uint8_t *)(ptr) + 1);
 }
 
 static inline void put_le32(uint32_t val, void *dst)

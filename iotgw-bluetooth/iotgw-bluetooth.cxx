@@ -1,23 +1,28 @@
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <time.h>
-#include <stdlib.h>
-#include <getopt.h>
-#include <unistd.h>
-#include <errno.h>
-#include <signal.h>
-#include <fcntl.h> /* Definition of AT_* constants */
-#include <sys/stat.h>
+extern "C" {
+  #include <sys/types.h>
+  #include <sys/socket.h>
+  #include <sys/un.h>
+  #include <netinet/in.h>
+  #include <arpa/inet.h>
+  #include <stdio.h>
+  #include <stdbool.h>
+  #include <stdint.h>
+  #include <time.h>
+  #include <stdlib.h>
+  #include <getopt.h>
+  #include <unistd.h>
+  #include <errno.h>
+  #include <signal.h>
+  #include <fcntl.h> /* Definition of AT_* constants */
+  #include <sys/stat.h>
+  #include <inttypes.h>
+  #include "mosquitto/mqttclient.h"
+  #include "iotgw-bluetooth-bt.h"
+}
+
 #include <vector>
 #include <string>
 #include <sstream>
-#include <inttypes.h>
 
 std::vector<uint8_t> HexToBytes(const std::string &hex)
 {
@@ -35,33 +40,40 @@ std::vector<uint8_t> HexToBytes(const std::string &hex)
 
 bool isConnected = false;
 
-extern "C"
+extern "C" void sendBtNotification(const uint8_t *value, size_t length);
+extern "C" void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t serverid);
+
+static void mqtt_connected_callback()
 {
-  extern void sendBtNotification(const uint8_t *value, size_t length);
+  printf("Connected to MQTT broker\n");
+  isConnected = true;
 
-#include "mosquitto/mqttclient.h"
-
-  static void mqtt_connected_callback()
-  {
-    printf("Connected to MQTT broker\n");
-    isConnected = true;
-
-    mqttsubscribe("#", 2);
-  }
+  mqttsubscribe("#", 2);
+}
 
 extern uint32_t uiBtSetpoint;
 extern uint32_t uiBtActual;
 
-  static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_t len)
-  {
-    if (strcmp(topic, BUILDVAR_GWBTBTGWFRAME) == 0)
-    {
-      sendBtNotification(bytes, len);
-    } else if (strcmp(topic, BUILDVAR_GWBTBTGWSETPOINT) == 0) {
-      uiBtSetpoint = atoi((const char *)bytes) & 0x06;
-    }
+static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_t len)
+{
+  if (strcmp(topic, BUILDVAR_GWBTBTGWFRAME) == 0) {
+    sendBtNotification(bytes, len);
+    return;
+  }
+  
+  if (strcmp(topic, BUILDVAR_GWBTBTGWSETPOINT) == 0) {
+    uiBtSetpoint = atoi((const char *)bytes) & 0x06;
+    return;
   }
 
+  uint64_t serverid;
+  if (std::sscanf(topic, BUILDVAR_GWBTBTBT_C20_TX "/%llu", &serverid) == 1) {
+    sendBtNotificationServerid(bytes, len, serverid);
+    return;
+  }
+}
+
+extern "C" {
   extern int btinit();
   extern int btquit();
   extern int btloop();
@@ -82,12 +94,25 @@ extern uint32_t uiBtActual;
     }
   }
 
-  static void intHandler(int /*signum*/)
+  void receivedBtC20PacketRx(const uint8_t *value, size_t len, server_t *server)
   {
-    g_quit = true;
+    std::stringstream ss;
+    ss << BUILDVAR_GWBTBTBT_C20_RX << "/" << server->serverid;
+    if (!mqttpublishbinary(ss.str().c_str(), value, len)) {
+      printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
+    }
   }
+}
 
-  extern void bt_at_exit();
+static void intHandler(int /*signum*/)
+{
+  g_quit = true;
+}
+
+
+extern "C" {
+  
+  void bt_at_exit();
 
   static void exit_handler(void)
   {

@@ -426,9 +426,13 @@ typedef struct {
 #define BDADDR_LE_PUBLIC       0x01
 #define BDADDR_LE_RANDOM       0x02
 
-#define BDADDR_ANY   (&(bdaddr_t) {{0, 0, 0, 0, 0, 0}})
-#define BDADDR_ALL   (&(bdaddr_t) {{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}})
-#define BDADDR_LOCAL (&(bdaddr_t) {{0, 0, 0, 0xff, 0xff, 0xff}})
+extern const bdaddr_t bdaddr_any;
+extern const bdaddr_t bdaddr_all;
+extern const bdaddr_t bdaddr_local;
+
+#define BDADDR_ANY   (&bdaddr_any)
+#define BDADDR_ALL   (&bdaddr_all)
+#define BDADDR_LOCAL (&bdaddr_local)
 
 /* Copy, swap, convert BD Address */
 static inline int bacmp(const bdaddr_t *ba1, const bdaddr_t *ba2)

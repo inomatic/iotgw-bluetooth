@@ -134,7 +134,7 @@ int bt_uuid16_cmp(const bt_uuid_t *uuid1, uint16_t uuid2)
  */
 int bt_uuid_to_string(const bt_uuid_t *uuid, char *str, size_t n)
 {
-	bt_uuid_t tmp;
+	bt_uuid_t tmp = {0};
 	unsigned int   data0;
 	unsigned short data1;
 	unsigned short data2;
