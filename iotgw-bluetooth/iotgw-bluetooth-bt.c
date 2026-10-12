@@ -55,10 +55,6 @@ bt_uuid_t uuidDataService;
 bt_uuid_t uuidReceiveAck;
 bt_uuid_t uuidTransmit;
 bt_uuid_t uuidReceiveNoAck;
-bt_uuid_t uuidReceiveChaCha20Poly1305AEAD;
-
-bt_uuid_t uuidReceiveC20Rx;
-bt_uuid_t uuidReceiveC20Tx;
 
 bt_uuid_t uuidDeviceInformationService;
 bt_uuid_t uuidSerial;
@@ -355,38 +351,6 @@ done:
 	gatt_db_attribute_write_result(attrib, id, ecode);
 }
 
-static void iotgw_data_write_chacha20poly1305aead_cb(struct gatt_db_attribute *attrib,
-					unsigned int id, uint16_t offset,
-					const uint8_t *value, size_t len,
-					uint8_t opcode, struct bt_att *att,
-					void *user_data)
-{
-	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
-	server_t *server = (server_t *)(user_data);
-	uint8_t ecode = 0;
-
-	if (!value) {
-		ecode = BT_ATT_ERROR_INVALID_ATTRIBUTE_VALUE_LEN;
-		goto done;
-	}
-
-	if (offset) {
-		ecode = BT_ATT_ERROR_INVALID_OFFSET;
-		goto done;
-	}
-
-	for(uint8_t i = 0; i < MaxServers; i++) {
-		if (g_servers[i] == server) {
-			g_servers[i]->lastReceivedBtPacketTime = HAL_GetSeconds();
-		}
-	}
-
-	receivedBtChacha20Poly1305AEADPacket(value, len);
-
-done:
-	gatt_db_attribute_write_result(attrib, id, ecode);
-}
-
 static void iotgw_data_write_c20_rx_cb(struct gatt_db_attribute *attrib,
 					unsigned int id, uint16_t offset,
 					const uint8_t *value, size_t len,
@@ -605,7 +569,6 @@ static void populate_iotgw_service(server_t *server)
 	struct gatt_db_attribute *iotgw_data_ccc = {0};
 	struct gatt_db_attribute *iotgw_receive_ack = {0};
 	struct gatt_db_attribute *iotgw_receive_no_ack = {0};
-	struct gatt_db_attribute *iotgw_receive_chacha20poly1305aead = {0};
 	struct gatt_db_attribute *iotgw_receive_c20_rx = {0};
 	struct gatt_db_attribute *iotgw_receive_c20_tx = {0};
 
@@ -615,6 +578,50 @@ static void populate_iotgw_service(server_t *server)
 		exit(1);
 	}
 	server->iotgw_dataservice_handle = gatt_db_attribute_get_handle(serviceData);
+
+
+	bt_uuid_t uuidReceiveC20Tx = {0};
+	bt_uuid_t uuidReceiveC20Rx = {0};
+	const uint128_t zero_uuid = {0};
+	if (bt_string_to_uuid(&uuidReceiveC20Tx, BUILDVAR_GWBT_C20_TX_UUID) < 0 ||
+			uuidReceiveC20Tx.type != BT_UUID128 ||
+			memcmp(&uuidReceiveC20Tx.value.u128, &zero_uuid,
+					sizeof(zero_uuid)) == 0) {
+		fprintf(stderr, "Invalid C20 TX UUID: '%s'\n", BUILDVAR_GWBT_C20_TX_UUID);
+		exit(1);
+	}
+	if (bt_string_to_uuid(&uuidReceiveC20Rx, BUILDVAR_GWBT_C20_RX_UUID) < 0 ||
+			uuidReceiveC20Rx.type != BT_UUID128 ||
+			memcmp(&uuidReceiveC20Rx.value.u128, &zero_uuid,
+					sizeof(zero_uuid)) == 0) {
+		fprintf(stderr, "Invalid C20 RX UUID: '%s'\n", BUILDVAR_GWBT_C20_RX_UUID);
+		exit(1);
+	}
+
+	iotgw_receive_c20_rx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Rx,
+						BT_ATT_PERM_WRITE,
+						BT_GATT_CHRC_PROP_WRITE |
+						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
+						NULL, iotgw_data_write_c20_rx_cb,
+						server);
+
+	if (iotgw_receive_c20_rx == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_c20_rx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+
+	iotgw_receive_c20_tx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Tx,
+						BT_ATT_PERM_NONE,
+						BT_GATT_CHRC_PROP_NOTIFY,
+						NULL, NULL, NULL);
+
+	if (iotgw_receive_c20_tx == NULL) {
+		fprintf(stderr, "Failed to add iotgw_receive_c20_tx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
+	server->iotgw_data_handle_c20_tx = gatt_db_attribute_get_handle(iotgw_receive_c20_tx);
+
+
 
 	iotgw_data = gatt_db_service_add_characteristic(serviceData, &uuidTransmit,
 						BT_ATT_PERM_NONE,
@@ -664,41 +671,6 @@ static void populate_iotgw_service(server_t *server)
 		exit(1);
 	}
 
-	iotgw_receive_chacha20poly1305aead = gatt_db_service_add_characteristic(serviceData, &uuidReceiveChaCha20Poly1305AEAD,
-						BT_ATT_PERM_WRITE,
-						BT_GATT_CHRC_PROP_WRITE |
-						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
-						NULL, iotgw_data_write_chacha20poly1305aead_cb,
-						server);
-
-	if (iotgw_receive_chacha20poly1305aead == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_chacha20poly1305aead characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
-	}
-
-	iotgw_receive_c20_rx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Rx,
-						BT_ATT_PERM_WRITE,
-						BT_GATT_CHRC_PROP_WRITE |
-						BT_GATT_CHRC_PROP_WRITE_WITHOUT_RESP,
-						NULL, iotgw_data_write_c20_rx_cb,
-						server);
-
-	if (iotgw_receive_c20_rx == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_c20_rx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
-	}
-
-	iotgw_receive_c20_tx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Tx,
-						BT_ATT_PERM_NONE,
-						BT_GATT_CHRC_PROP_NOTIFY,
-						NULL, NULL, NULL);
-
-	if (iotgw_receive_c20_tx == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_c20_tx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
-	}
-	server->iotgw_data_handle_c20_tx = gatt_db_attribute_get_handle(iotgw_receive_c20_tx);
-
 	gatt_db_service_set_active(serviceData, true);
 }
 
@@ -740,14 +712,7 @@ static server_t *server_create(int fd, uint16_t mtu)
 	}
 
 	server->name_len = name_len + 1;
-	server->device_name = malloc(name_len + 1);
-	if (!server->device_name) {
-		fprintf(stderr, "Failed to allocate memory for device name\n");
-		goto fail;
-	}
-
-	memcpy(server->device_name, device_name, name_len);
-	server->device_name[name_len] = '\0';
+	snprintf((char *)server->device_name, sizeof(server->device_name), "%s", device_name);
 
 	server->fd = fd;
 	server->db = gatt_db_new();
@@ -779,7 +744,6 @@ static server_t *server_create(int fd, uint16_t mtu)
 
 fail:
 	gatt_db_unref(server->db);
-	free(server->device_name);
 	bt_att_unref(server->att);
 	free(server);
 
@@ -939,8 +903,9 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t se
 		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->serverid == serverid) {
-				if (g_servers[i]->iotgw_data_enabled) {
-
+				if (true || g_servers[i]->iotgw_data_enabled) {
+					fprintf(stderr, "Sending notification to serverid: %llu, fd: %d\n", g_servers[i]->serverid, g_servers[i]->fd);
+					fflush(stderr);
 					int64_t diff = getMicroSecs() - uiLastSentUs;
 					if (diff > 100 && diff <= 20000) {
 						pthread_mutex_unlock(&g_server_lock);
@@ -951,15 +916,24 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t se
 					}
 
 					if (g_servers[i] != NULL) {
-						if (g_servers[i]->iotgw_data_enabled) {
-							if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle_aes256, value, length, false)) {
+						if (true || g_servers[i]->iotgw_data_enabled) {
+							if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle_c20_tx, value, length, false)) {
 								fprintf(stderr,"Failed to initiate notification\n");
+								fflush(stderr);
+							} else {
+								fprintf(stderr,"Notification sent successfully\n");
 								fflush(stderr);
 							}
 							uiLastSentUs = getMicroSecs();
 						}
 					}
+				} else {
+					fprintf(stderr, "Failed to send notification to serverid: %llu, iotgw_data_enabled: %d\n", g_servers[i]->serverid, g_servers[i]->iotgw_data_enabled);
+					fflush(stderr);
 				}
+			} else {
+				fprintf(stderr, "Serverid mismatch: expected %llu, got %llu\n", serverid, g_servers[i]->serverid);
+				fflush(stderr);
 			}
 		}
 		pthread_mutex_unlock(&g_server_lock);
@@ -1037,9 +1011,6 @@ int btinit()
 	bt_string_to_uuid(&uuidReceiveAck, BUILDVAR_GWBTRECEIVEACKUUID);
 	bt_string_to_uuid(&uuidTransmit, BUILDVAR_GWBTTRANSMITUUID);
 	bt_string_to_uuid(&uuidReceiveNoAck, BUILDVAR_GWBTRECEIVENOACKUUID);
-	bt_string_to_uuid(&uuidReceiveChaCha20Poly1305AEAD, BUILDVAR_GWBTRECEIVECHACHA20POLY1305AEADUUID);
-	bt_string_to_uuid(&uuidReceiveC20Tx, BUILDVAR_GWBT_C20_TX_UUID);
-	bt_string_to_uuid(&uuidReceiveC20Rx, BUILDVAR_GWBT_C20_RX_UUID);
 
 	bt_uuid16_create(&uuidDeviceInformationService, 0x180A);
 	bt_uuid16_create(&uuidSerial, 0x2A25);

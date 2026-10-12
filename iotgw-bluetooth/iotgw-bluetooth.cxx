@@ -67,10 +67,13 @@ static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_
   }
 
   uint64_t serverid;
-  if (std::sscanf(topic, BUILDVAR_GWBTBTBT_C20_TX "/%llu", &serverid) == 1) {
+  if (std::sscanf(topic, BUILDVAR_GWBTBTBT_C20_TX "%llu", &serverid) == 1) {
+    fprintf(stderr, "Received MQTT C20 to serverid: %llu\n", serverid);
     sendBtNotificationServerid(bytes, len, serverid);
     return;
   }
+
+  //fprintf(stderr, "Received MQTT message on unknown topic: '%s'\n", topic);
 }
 
 extern "C" {
@@ -97,8 +100,10 @@ extern "C" {
   void receivedBtC20PacketRx(const uint8_t *value, size_t len, server_t *server)
   {
     std::stringstream ss;
-    ss << BUILDVAR_GWBTBTBT_C20_RX << "/" << server->serverid;
-    if (!mqttpublishbinary(ss.str().c_str(), value, len)) {
+    ss << BUILDVAR_GWBTBTBT_C20_RX << "" << server->serverid;
+    std::string topicStr = ss.str();
+    fprintf(stderr, "C20 Publishing to topic: %s\n", topicStr.c_str());
+    if (!mqttpublishbinary(topicStr.c_str(), value, len)) {
       printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
     }
   }

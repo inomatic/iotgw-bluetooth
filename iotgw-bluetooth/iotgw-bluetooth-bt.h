@@ -17,7 +17,7 @@ typedef struct {
 	struct gatt_db *db;
 	struct bt_gatt_server *gatt;
 
-	uint8_t *device_name;
+	uint8_t device_name[255];
 	size_t name_len;
 
 	uint16_t gatt_svc_chngd_handle;
