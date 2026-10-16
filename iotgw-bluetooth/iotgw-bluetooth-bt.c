@@ -94,7 +94,7 @@ pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(server_t *server, uint8_t i);
-static int advertising = 5;
+static int advertising = 10;
 static uint32_t uiBtActual = 0x06;
 uint32_t uiBtSetpoint = 0x06;
 
@@ -169,7 +169,7 @@ static void att_disconnect_cb(int err, void *user_data)
 	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
 	fflush(stderr);
 
-	advertising = 5;
+	advertising = 10;
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 
