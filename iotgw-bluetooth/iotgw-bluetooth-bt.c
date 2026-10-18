@@ -681,7 +681,7 @@ static void populate_db(server_t *server)
 	populate_iotgw_service(server);
 }
 
-static uint64_t serverid = 1;
+static uint32_t serverid = 1;
 static server_t *server_create(int fd, uint16_t mtu)
 {
 	server_t *server;
@@ -693,7 +693,7 @@ static server_t *server_create(int fd, uint16_t mtu)
 		return NULL;
 	}
 
-	server->serverid = serverid++;
+	server->serverid = ++serverid;
 
 	server->att = bt_att_new(fd, false);
 	if (!server->att) {
@@ -897,14 +897,14 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 	}
 }
 
-void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t serverid) {
+void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t serverid) {
 	static uint64_t uiLastSentUs = 0;
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->serverid == serverid) {
 				if (true || g_servers[i]->iotgw_data_enabled) {
-					fprintf(stderr, "Sending notification to serverid: %llu, fd: %d\n", g_servers[i]->serverid, g_servers[i]->fd);
+					fprintf(stderr, "Sending notification to serverid: %u, fd: %d\n", g_servers[i]->serverid, g_servers[i]->fd);
 					fflush(stderr);
 					int64_t diff = getMicroSecs() - uiLastSentUs;
 					if (diff > 100 && diff <= 20000) {
@@ -928,11 +928,11 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t se
 						}
 					}
 				} else {
-					fprintf(stderr, "Failed to send notification to serverid: %llu, iotgw_data_enabled: %d\n", g_servers[i]->serverid, g_servers[i]->iotgw_data_enabled);
+					fprintf(stderr, "Failed to send notification to serverid: %u, iotgw_data_enabled: %d\n", g_servers[i]->serverid, g_servers[i]->iotgw_data_enabled);
 					fflush(stderr);
 				}
 			} else {
-				fprintf(stderr, "Serverid mismatch: expected %llu, got %llu\n", serverid, g_servers[i]->serverid);
+				fprintf(stderr, "Serverid mismatch: expected %u, got %u\n", serverid, g_servers[i]->serverid);
 				fflush(stderr);
 			}
 		}

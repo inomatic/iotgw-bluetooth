@@ -30,7 +30,7 @@ typedef struct {
 	uint16_t iotgw_devinfo_handle;
 	bool iotgw_data_enabled;
 
-	uint64_t serverid;
+	uint32_t serverid;
 	bool c20_enabled;
 } server_t;
 

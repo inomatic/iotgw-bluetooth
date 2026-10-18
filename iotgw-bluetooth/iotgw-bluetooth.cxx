@@ -41,7 +41,7 @@ std::vector<uint8_t> HexToBytes(const std::string &hex)
 bool isConnected = false;
 
 extern "C" void sendBtNotification(const uint8_t *value, size_t length);
-extern "C" void sendBtNotificationServerid(const uint8_t *value, size_t length, uint64_t serverid);
+extern "C" void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t serverid);
 
 static void mqtt_connected_callback()
 {
