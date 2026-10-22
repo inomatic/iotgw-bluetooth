@@ -6,7 +6,7 @@
                 "${workspaceFolder}/**"
             ],
             "defines": [
-                "BUILDVAR_GWBTNAME=\"Inomatic IoT-Gateway\"",
+                "BUILDVAR_GWBTNAME=\"Inomatic Connect\"",
                 "BUILDVAR_GWBTCONNECT=\"bluetooth/connect\"",
                 "BUILDVAR_GWBTSERVICEUUID=\"6E400001-C352-11E5-953D-0002A5D5C51B\"",
                 "BUILDVAR_GWBTRECEIVEACKUUID=\"6E400002-C352-11E5-953D-0002A5D5C51B\"",

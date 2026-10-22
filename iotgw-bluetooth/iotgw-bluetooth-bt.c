@@ -94,32 +94,38 @@ pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(server_t *server, uint8_t i);
-static int advertising = 10;
+static int advertisingCount = 3;
 static uint32_t uiBtActual = 0x06;
 uint32_t uiBtSetpoint = 0x06;
+static bool isAdvertising = false;
 
 static void restart_hci_advertising() {
-	uint8_t adv_enable = 1;
 	int timeout = 1000;
-	if (advertising > 1 && (uiBtActual & 4) == 4) {
-		uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
+	if (advertisingCount > 1 && (uiBtActual & 4) == 4) {
+		uint8_t res = hci_le_set_advertise_enable(dev_sock, 1, timeout);
 		if (res != 0) {
-			fprintf(stderr, "Failed to enable LE advertising %d %d %d\n", res, errno, advertising);
+			fprintf(stderr, " !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Failed to enable LE advertising %d %d %d\n", res, errno, advertisingCount);
 			fflush(stderr);
-			advertising--;
+			advertisingCount--;
+			if(advertisingCount == 1) {
+				fprintf(stderr, "Advertising failed after multiple attempts\n");
+				fflush(stderr);
+				exit(EXIT_FAILURE);
+			}
 			sleep(1);
 		} else {
 			fprintf(stderr, "HCI LE Advertising restarted successfully!\n");
 			fflush(stderr);
-			advertising = 1;
+			advertisingCount = 0;
+			isAdvertising = true;
 		}
-	} else if (advertising > 0 && (uiBtActual & 4) != 4) {
-		uint8_t adv_enable = 0;
+	} else if (advertisingCount > 0 && (uiBtActual & 4) != 4) {
 		int timeout = 1000;
-		uint8_t res = hci_le_set_advertise_enable(dev_sock, adv_enable, timeout);
-		advertising = 0;
+		uint8_t res = hci_le_set_advertise_enable(dev_sock, 0, timeout);
+		advertisingCount = 0;
+		isAdvertising = false;
 		if (res != 0) {
-			fprintf(stderr, "Failed to disable LE advertising %d %d\n", res, errno);
+			fprintf(stderr, " !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Failed to disable LE advertising %d %d\n", res, errno);
 			fflush(stderr);
 		} else {
 			fprintf(stderr, "HCI LE Advertising stopped successfully!\n");
@@ -168,8 +174,6 @@ static void att_disconnect_cb(int err, void *user_data)
 {
 	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
 	fflush(stderr);
-
-	advertising = 10;
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 
@@ -610,6 +614,9 @@ static void populate_iotgw_service(server_t *server)
 		exit(1);
 	}
 
+	bt_uuid_t uuid1;
+	bt_uuid16_create(&uuid1, GATT_CLIENT_CHARAC_CFG_UUID);
+
 	iotgw_receive_c20_tx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Tx,
 						BT_ATT_PERM_NONE,
 						BT_GATT_CHRC_PROP_NOTIFY,
@@ -621,7 +628,15 @@ static void populate_iotgw_service(server_t *server)
 	}
 	server->iotgw_data_handle_c20_tx = gatt_db_attribute_get_handle(iotgw_receive_c20_tx);
 
+	iotgw_data_ccc = gatt_db_service_add_descriptor(serviceData, &uuid1,
+					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
+					iotgw_data_ccc_read_cb,
+					iotgw_data_ccc_write_cb, server);
 
+	if (iotgw_data_ccc == NULL) {
+		fprintf(stderr, "Failed to add iotgw_data_ccc descriptor !!!!!!!!!!!!!!!!!!!!!!!\n");
+		exit(1);
+	}
 
 	iotgw_data = gatt_db_service_add_characteristic(serviceData, &uuidTransmit,
 						BT_ATT_PERM_NONE,
@@ -633,10 +648,6 @@ static void populate_iotgw_service(server_t *server)
 		exit(1);
 	}
 	server->iotgw_data_handle_aes256 = gatt_db_attribute_get_handle(iotgw_data);
-
-	bt_uuid_t uuid1;
-	bt_uuid16_create(&uuid1, GATT_CLIENT_CHARAC_CFG_UUID);
-
 
 	iotgw_data_ccc = gatt_db_service_add_descriptor(serviceData, &uuid1,
 					BT_ATT_PERM_READ | BT_ATT_PERM_WRITE,
@@ -695,19 +706,25 @@ static server_t *server_create(int fd, uint16_t mtu)
 
 	server->serverid = ++serverid;
 
+	fprintf(stderr, "Creating server with serverid %u\n", server->serverid);
+	fflush(stderr);
+
 	server->att = bt_att_new(fd, false);
 	if (!server->att) {
 		fprintf(stderr, "Failed to initialze ATT transport layer\n");
+		fflush(stderr);
 		goto fail;
 	}
 
 	if (!bt_att_set_close_on_unref(server->att, true)) {
 		fprintf(stderr, "Failed to set up ATT transport layer\n");
+		fflush(stderr);
 		goto fail;
 	}
 
 	if (!bt_att_register_disconnect(server->att, att_disconnect_cb, server, NULL)) {
 		fprintf(stderr, "Failed to set ATT disconnect handler\n");
+		fflush(stderr);
 		goto fail;
 	}
 
@@ -718,12 +735,14 @@ static server_t *server_create(int fd, uint16_t mtu)
 	server->db = gatt_db_new();
 	if (!server->db) {
 		fprintf(stderr, "Failed to create GATT database\n");
+		fflush(stderr);
 		goto fail;
 	}
 
 	server->gatt = bt_gatt_server_new(server->db, server->att, 512 + 5, 0);
 	if (!server->gatt) {
 		fprintf(stderr, "Failed to create GATT server\n");
+		fflush(stderr);
 		goto fail;
 	}
 
@@ -903,7 +922,7 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t se
 		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->serverid == serverid) {
-				if (true || g_servers[i]->iotgw_data_enabled) {
+				if (g_servers[i]->iotgw_data_enabled) {
 					fprintf(stderr, "Sending notification to serverid: %u, fd: %d\n", g_servers[i]->serverid, g_servers[i]->fd);
 					fflush(stderr);
 					int64_t diff = getMicroSecs() - uiLastSentUs;
@@ -932,8 +951,8 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t se
 					fflush(stderr);
 				}
 			} else {
-				fprintf(stderr, "Serverid mismatch: expected %u, got %u\n", serverid, g_servers[i]->serverid);
-				fflush(stderr);
+				//fprintf(stderr, "Serverid mismatch: expected %u, got %u\n", serverid, g_servers[i]->serverid);
+				//fflush(stderr);
 			}
 		}
 		pthread_mutex_unlock(&g_server_lock);
@@ -1104,17 +1123,21 @@ int btloop() {
 									uint16_t handle = btohs(cc->handle);
 									printf("Client Connected! Handle: 0x%04X\n", handle);
 									//request_fast_connection(handle);
-									advertising = 2;
+									advertisingCount = 3;
 							}
 					}
-			} 
-			else if (hdr->evt == EVT_DISCONN_COMPLETE) {
+			} else if (hdr->evt == EVT_DISCONN_COMPLETE) {
 					evt_disconn_complete *dc = (evt_disconn_complete *)ptr;
 					
 					if (dc->status == 0) {
 							printf("Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
-							advertising = 2;
 					}
+			} else if (hdr->evt == EVT_HARDWARE_ERROR) {
+				fprintf(stderr, "Hardware error occurred\n");
+				fflush(stderr);
+				advertisingCount = 10;
+			} else {
+				printf(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Unhandled HCI Event: 0x%02X\n", hdr->evt);
 			}
 		}
 	}
@@ -1171,7 +1194,7 @@ int btloop() {
 			}
 			pthread_mutex_unlock(&g_server_lock);
 
-			advertising = 2;
+			advertisingCount = 3;
 		}
 	}
 

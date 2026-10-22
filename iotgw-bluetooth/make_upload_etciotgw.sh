@@ -6,7 +6,7 @@ IP=$1
 
 source /opt/dev-tools/oecore-x86_64/environment-setup-cortexa7t2hf-neon-vfpv4-oe-linux-gnueabi
 
-export BUILDVAR_GWBTNAME="Inomatic IoT-Gateway"
+export BUILDVAR_GWBTNAME="Inomatic Connect"
 export BUILDVAR_GWBTCONNECT="bluetooth/connect"
 export BUILDVAR_GWBTSERVICEUUID="6E400001-C352-11E5-953D-0002A5D5C51B"
 export BUILDVAR_GWBTRECEIVEACKUUID="6E400002-C352-11E5-953D-0002A5D5C51B"
