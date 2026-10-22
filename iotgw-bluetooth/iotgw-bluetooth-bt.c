@@ -175,6 +175,8 @@ static void att_disconnect_cb(int err, void *user_data)
 	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
 	fflush(stderr);
 
+	advertisingCount = 10;
+
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 
 	server_t *server = user_data;
@@ -747,8 +749,8 @@ static server_t *server_create(int fd, uint16_t mtu)
 	}
 
 	if (verbose) {
-		bt_att_set_debug(server->att, BT_ATT_DEBUG_VERBOSE,
-						att_debug_cb, "att: ", NULL);
+		//bt_att_set_debug(server->att, BT_ATT_DEBUG_VERBOSE,
+		//				att_debug_cb, "att: ", NULL);
 		bt_gatt_server_set_debug(server->gatt, gatt_debug_cb,
 							"server: ", NULL);
 	}
