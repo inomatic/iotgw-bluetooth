@@ -993,6 +993,7 @@ int btinit()
 
 	get_bt_mac_addr();
 
+	// max 31 bytes advertisement packet!!!
 	uint8_t raw_adv_data[] = {
 			2, 0x01, 0x06,             // Flags: LE General Discoverable Mode, BR/EDR Not Supported
 			//9, 0x09, 'I','n','o','I','o','T','G','W', // Complete Local Name
