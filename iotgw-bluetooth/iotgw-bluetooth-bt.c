@@ -87,7 +87,7 @@ int dev_id;
 int dev_sock;
 
 static const char device_name[] = BUILDVAR_GWBTNAME;
-static bool verbose = true;
+static int verbose = 1;
 
 server_t* g_servers[MaxServers] = {0};
 pthread_mutex_t g_server_lock;
@@ -748,9 +748,11 @@ static server_t *server_create(int fd, uint16_t mtu)
 		goto fail;
 	}
 
-	if (verbose) {
-		//bt_att_set_debug(server->att, BT_ATT_DEBUG_VERBOSE,
-		//				att_debug_cb, "att: ", NULL);
+	if (verbose & 2) {
+		bt_att_set_debug(server->att, BT_ATT_DEBUG_VERBOSE,
+						att_debug_cb, "att: ", NULL);
+	}
+	if (verbose & 1) {
 		bt_gatt_server_set_debug(server->gatt, gatt_debug_cb,
 							"server: ", NULL);
 	}
