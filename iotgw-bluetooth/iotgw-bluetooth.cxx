@@ -137,20 +137,20 @@ extern "C" {
     mqttinit(BUILDVAR_GWBTCLIENTID, mqtt_message_callback, mqtt_connected_callback);
 
     int i;
-    for(uint8_t j = 0; j < 5; j++) {
+    for(uint8_t j = 0; j < 3; j++) {
       i = btinit();
       if (i == EXIT_SUCCESS) {
-        printf("Bluetooth initialized successfully on attempt %d/5\n", j+1);
+        printf("Bluetooth initialized successfully on attempt %d/3\n", j+1);
         break;
       }
-      printf("Bluetooth failed to initialize %d/5\n", j+1);
-      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/unbind");
-      usleep(100000);
-      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/bind");
-      sleep(1);
+      printf("Bluetooth failed to initialize %d/3\n", j+1);
     }
     if (i != EXIT_SUCCESS)
     {
+      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/unbind");
+      usleep(100000);
+      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/bind");
+      sleep(100000);
       return i;
     }
 
