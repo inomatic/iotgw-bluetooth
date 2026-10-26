@@ -144,6 +144,9 @@ extern "C" {
         break;
       }
       printf("Bluetooth failed to initialize %d/5\n", j+1);
+      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/unbind");
+      usleep(100000);
+      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/bind");
       sleep(1);
     }
     if (i != EXIT_SUCCESS)
