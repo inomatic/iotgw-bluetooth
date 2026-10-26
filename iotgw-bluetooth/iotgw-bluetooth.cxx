@@ -147,10 +147,6 @@ extern "C" {
     }
     if (i != EXIT_SUCCESS)
     {
-      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/unbind");
-      usleep(100000);
-      system("echo \"40018000.serial\" > /sys/bus/platform/drivers/stm32-usart/bind");
-      sleep(100000);
       return i;
     }
 
