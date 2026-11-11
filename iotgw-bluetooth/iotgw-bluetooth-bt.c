@@ -86,7 +86,8 @@ bt_uuid_t uuidManufacturerName;
 int dev_id;
 int dev_sock;
 
-static const char device_name[] = BUILDVAR_GWBTNAME;
+static const char *device_name_format = BUILDVAR_GWBTNAME;
+
 static int verbose = 1;
 
 server_t* g_servers[MaxServers] = {0};
@@ -507,11 +508,13 @@ void readSerial() {
 	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
 	if (fd < 0) {
 		printf("Could not open nvmem device for inomatic_serialno\n");
+		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "000000a");
 		return;
 	}
 	off_t pos = lseek(fd, inomatic_serialno_OtpPosition, SEEK_SET);
 	if (pos != inomatic_serialno_OtpPosition) {
 		printf("Could not seek to inomatic_serialno position\n");
+		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "000000b");
 		close(fd);
 		return;
 	}
@@ -524,6 +527,7 @@ void readSerial() {
 		printf("inomatic_serialno: %s\n", inomatic_serialno);
 	} else {
 		printf("Could not read inomatic_serialno\n");
+		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "000000c");
 	}
 	close(fd);
 }
@@ -559,6 +563,10 @@ done:
 
 static void populate_iotgw_service(server_t *server)
 {
+	if (inomatic_serialno[0] == '\0') {
+		readSerial();
+	}
+
 	struct gatt_db_attribute *serviceDevInfo;
 	serviceDevInfo = gatt_db_add_service(server->db, &uuidDeviceInformationService, true, 8);
 	server->iotgw_devinfo_handle = gatt_db_attribute_get_handle(serviceDevInfo);
@@ -698,7 +706,6 @@ static uint32_t serverid = 1;
 static server_t *server_create(int fd, uint16_t mtu)
 {
 	server_t *server;
-	size_t name_len = strlen(device_name);
 
 	server = new0(server_t, 1);
 	if (!server) {
@@ -730,8 +737,11 @@ static server_t *server_create(int fd, uint16_t mtu)
 		goto fail;
 	}
 
-	server->name_len = name_len + 1;
-	snprintf((char *)server->device_name, sizeof(server->device_name), "%s", device_name);
+	if (inomatic_serialno[0] == '\0') {
+		readSerial();
+	}
+	snprintf((char *)server->device_name, sizeof(server->device_name), "%s-%s", device_name_format, inomatic_serialno);
+	server->name_len = strlen((char *)server->device_name) + 1;
 
 	server->fd = fd;
 	server->db = gatt_db_new();
