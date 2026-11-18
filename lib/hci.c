@@ -2981,11 +2981,14 @@ int hci_le_set_scan_parameters(int dd, uint8_t type,
 	return 0;
 }
 
-int hci_le_set_advertise_enable(int dd, uint8_t enable, int to)
+int hci_le_set_advertise_enable(int dd, uint8_t enable, int to, uint8_t *status)
 {
 	struct hci_request rq;
 	le_set_advertise_enable_cp adv_cp;
-	uint8_t status;
+	uint8_t istatus = 0;
+	if (status == NULL) {
+		status = &istatus;
+	}
 
 	memset(&adv_cp, 0, sizeof(adv_cp));
 	adv_cp.enable = enable;
@@ -2995,13 +2998,13 @@ int hci_le_set_advertise_enable(int dd, uint8_t enable, int to)
 	rq.ocf = OCF_LE_SET_ADVERTISE_ENABLE;
 	rq.cparam = &adv_cp;
 	rq.clen = LE_SET_ADVERTISE_ENABLE_CP_SIZE;
-	rq.rparam = &status;
+	rq.rparam = status;
 	rq.rlen = 1;
 
 	if (hci_send_req(dd, &rq, to) < 0)
 		return -1;
 
-	if (status) {
+	if (*status) {
 		errno = EIO;
 		return -1;
 	}

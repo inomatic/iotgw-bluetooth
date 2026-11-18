@@ -33,6 +33,7 @@
 #include "lib/hci_lib.h"
 #include "lib/l2cap.h"
 #include "lib/uuid.h"
+#include "monitor/bt.h"
 
 #include "src/shared/mainloop.h"
 #include "src/shared/util.h"
@@ -95,43 +96,65 @@ pthread_mutex_t g_server_lock;
 
 static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(server_t *server, uint8_t i);
-static int advertisingCount = 3;
-static uint32_t uiBtActual = 0x06;
+static int advertisingFailCount = 0;
+static int advertisingSetpoint = -1;
+static int advertisingActual = -1;
 uint32_t uiBtSetpoint = 0x06;
 static bool isAdvertising = false;
 
 static void restart_hci_advertising() {
+	/*if ((uiBtSetpoint & 2) == 2) {
+		if ((uiBtActual & 2) != 2) {
+			//printf("Bluetooth state turning on\n");
+			//system("/usr/bin/systemctl start bluetooth");
+			uiBtActual |= 2;
+		}
+	} else {
+		if ((uiBtActual & 2) == 2) {
+			//printf("Bluetooth state turning off\n");
+			//system("/usr/bin/systemctl stop bluetooth");
+			uiBtActual &= ~2;
+		}
+	}*/
+
+	if ((uiBtSetpoint & 4) == 4) {
+		advertisingSetpoint = 1;
+	} else {
+		advertisingSetpoint = 0;
+	}
+
+	if (advertisingActual == advertisingSetpoint) {
+		return;
+	}
+
+	uint8_t status = 0;
 	int timeout = 1000;
-	if (advertisingCount > 1 && (uiBtActual & 4) == 4) {
-		uint8_t res = hci_le_set_advertise_enable(dev_sock, 1, timeout);
-		if (res != 0) {
-			fprintf(stderr, " !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Failed to enable LE advertising %d %d %d\n", res, errno, advertisingCount);
+	uint8_t res = hci_le_set_advertise_enable(dev_sock, advertisingSetpoint, timeout, &status);
+	if (res != 0) {
+		if (status == BT_HCI_ERR_COMMAND_DISALLOWED) {
+			// already advertising
+			advertisingFailCount = 0;
+			fprintf(stderr, "Advertising is already %s\n", advertisingSetpoint ? "on" : "off");
 			fflush(stderr);
-			advertisingCount--;
-			if(advertisingCount == 1) {
-				fprintf(stderr, "Advertising failed after multiple attempts\n");
+			advertisingActual = advertisingSetpoint;
+		} else {
+			advertisingFailCount++;
+			fprintf(stderr, "!!!!!!!!!! Failed to set LE advertising %s %d %d %d\n", advertisingSetpoint ? "on" : "off", res, status, advertisingFailCount);
+			fflush(stderr);
+			if(advertisingFailCount > 3) {
+				fprintf(stderr, "!!!!!!!!!! Advertising failed after multiple attempts\n");
 				fflush(stderr);
-				exit(EXIT_FAILURE);
+				system("/usr/bin/systemctl --no-block start bluetooth-rebind");
+				exit(42);
 			}
 			sleep(1);
-		} else {
-			fprintf(stderr, "HCI LE Advertising restarted successfully!\n");
-			fflush(stderr);
-			advertisingCount = 0;
-			isAdvertising = true;
 		}
-	} else if (advertisingCount > 0 && (uiBtActual & 4) != 4) {
-		int timeout = 1000;
-		uint8_t res = hci_le_set_advertise_enable(dev_sock, 0, timeout);
-		advertisingCount = 0;
-		isAdvertising = false;
-		if (res != 0) {
-			fprintf(stderr, " !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Failed to disable LE advertising %d %d\n", res, errno);
-			fflush(stderr);
-		} else {
-			fprintf(stderr, "HCI LE Advertising stopped successfully!\n");
-			fflush(stderr);
-		}
+	} else {
+		advertisingActual = advertisingSetpoint;
+		advertisingFailCount = 0;
+		fprintf(stderr, "HCI LE Advertising set %s successfully!\n", advertisingSetpoint ? "on" : "off");
+		fflush(stderr);
+		isAdvertising = true;
 	}
 }
 
@@ -176,7 +199,7 @@ static void att_disconnect_cb(int err, void *user_data)
 	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
 	fflush(stderr);
 
-	advertisingCount = 10;
+	advertisingActual = -1;
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 
@@ -954,8 +977,8 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t se
 								fprintf(stderr,"Failed to initiate notification\n");
 								fflush(stderr);
 							} else {
-								fprintf(stderr,"Notification sent successfully\n");
-								fflush(stderr);
+								//fprintf(stderr,"Notification sent successfully\n");
+								//fflush(stderr);
 							}
 							uiLastSentUs = getMicroSecs();
 						}
@@ -1075,28 +1098,6 @@ int btinit()
 bool bHwaddrSent = false;
 
 int btloop() {
-	if (uiBtSetpoint != uiBtActual) {
-		if ((uiBtSetpoint & 2) == 2) {
-			if ((uiBtActual & 2) != 2) {
-				printf("Bluetooth state turning on\n");
-				//system("/usr/bin/systemctl start bluetooth");
-				uiBtActual |= 2;
-			}
-		} else {
-			if ((uiBtActual & 2) == 2) {
-				printf("Bluetooth state turning off\n");
-				//system("/usr/bin/systemctl stop bluetooth");
-				uiBtActual &= ~2;
-			}
-		}
-
-		if ((uiBtSetpoint & 4) == 4) {
-			uiBtActual |= 4;
-		} else {
-			uiBtActual &= ~4;
-		}
-	}
-
 	restart_hci_advertising();
 
 	unsigned char buf[HCI_MAX_EVENT_SIZE];
@@ -1138,7 +1139,7 @@ int btloop() {
 									uint16_t handle = btohs(cc->handle);
 									printf("Client Connected! Handle: 0x%04X\n", handle);
 									//request_fast_connection(handle);
-									advertisingCount = 3;
+									advertisingActual = -1;
 							}
 					}
 			} else if (hdr->evt == EVT_DISCONN_COMPLETE) {
@@ -1150,7 +1151,7 @@ int btloop() {
 			} else if (hdr->evt == EVT_HARDWARE_ERROR) {
 				fprintf(stderr, "Hardware error occurred\n");
 				fflush(stderr);
-				advertisingCount = 10;
+				advertisingActual = -1;
 			} else {
 				printf(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Unhandled HCI Event: 0x%02X\n", hdr->evt);
 			}
@@ -1209,7 +1210,7 @@ int btloop() {
 			}
 			pthread_mutex_unlock(&g_server_lock);
 
-			advertisingCount = 3;
+			advertisingActual = -1;
 		}
 	}
 

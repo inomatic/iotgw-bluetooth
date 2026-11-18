@@ -52,7 +52,6 @@ static void mqtt_connected_callback()
 }
 
 extern uint32_t uiBtSetpoint;
-extern uint32_t uiBtActual;
 
 static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_t len)
 {
