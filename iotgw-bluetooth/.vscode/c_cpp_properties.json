@@ -39,7 +39,17 @@
                 "BUILDVAR_GWSTATUS=\"gateway/status\"",
                 "BUILDVAR_GWBTGWFRAME=\"gateway/bluetoothframe\""
             ],
-            "intelliSenseMode": "linux-gcc-x64"
+            "intelliSenseMode": "linux-clang-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/**"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c23",
+            "cppStandard": "c++23",
+            "configurationProvider": "vector-of-bool.cmake-tools"
         }
     ],
     "version": 4
