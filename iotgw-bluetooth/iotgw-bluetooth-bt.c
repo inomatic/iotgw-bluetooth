@@ -44,6 +44,8 @@
 
 #include "mosquitto/mqttclient.h"
 
+uint64_t debugFlags = 0;
+
 const bdaddr_t bdaddr_any = {{0, 0, 0, 0, 0, 0}};
 const bdaddr_t bdaddr_all = {{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}};
 const bdaddr_t bdaddr_local = {{0, 0, 0, 0xff, 0xff, 0xff}};
@@ -68,13 +70,6 @@ bt_uuid_t uuidManufacturerName;
 #define BLE_CONN_LATENCY 0
 #define BLE_CONN_SUPERVISION_TIMEOUT 200 /* 2 s */
 
-#define PRLOG(...) \
-	do { \
-		fprintf(stderr,__VA_ARGS__); \
-		fflush(stderr); \
-	} while (0)
-
-
 #define COLOR_OFF	"\x1B[0m"
 #define COLOR_RED	"\x1B[0;91m"
 #define COLOR_GREEN	"\x1B[0;92m"
@@ -94,13 +89,18 @@ static int verbose = 1;
 server_t* g_servers[MaxServers] = {0};
 pthread_mutex_t g_server_lock;
 
-static server_t *server_create(int fd, uint16_t mtu);
 static void server_destroy(server_t *server, uint8_t i);
 static int advertisingFailCount = 0;
 static int advertisingSetpoint = -1;
 static int advertisingActual = -1;
+static int deviceCount = 0;
 uint32_t uiBtSetpoint = 0x06;
 static bool isAdvertising = false;
+
+void exit_with_rebind() {
+	system("/usr/bin/systemctl --no-block start bluetooth-rebind");
+	exit(42);
+}
 
 static void restart_hci_advertising() {
 	/*if ((uiBtSetpoint & 2) == 2) {
@@ -134,26 +134,21 @@ static void restart_hci_advertising() {
 		if (status == BT_HCI_ERR_COMMAND_DISALLOWED) {
 			// already advertising
 			advertisingFailCount = 0;
-			fprintf(stderr, "Advertising is already %s\n", advertisingSetpoint ? "on" : "off");
-			fflush(stderr);
+			STDLOG(debugFlag_ADVERTISING, "Advertising is already %s\n", advertisingSetpoint ? "on" : "off");
 			advertisingActual = advertisingSetpoint;
 		} else {
 			advertisingFailCount++;
-			fprintf(stderr, "!!!!!!!!!! Failed to set LE advertising %s %d %d %d\n", advertisingSetpoint ? "on" : "off", res, status, advertisingFailCount);
-			fflush(stderr);
+			ERRLOG("!!!!! Failed to set LE advertising %s %d %d %d\n", advertisingSetpoint ? "on" : "off", res, status, advertisingFailCount);
 			if(advertisingFailCount > 3) {
-				fprintf(stderr, "!!!!!!!!!! Advertising failed after multiple attempts\n");
-				fflush(stderr);
-				system("/usr/bin/systemctl --no-block start bluetooth-rebind");
-				exit(42);
+				ERRLOG("!!!!!!!!!! Advertising failed after multiple attempts\n");
+				exit_with_rebind();
 			}
 			sleep(1);
 		}
 	} else {
 		advertisingActual = advertisingSetpoint;
 		advertisingFailCount = 0;
-		fprintf(stderr, "HCI LE Advertising set %s successfully!\n", advertisingSetpoint ? "on" : "off");
-		fflush(stderr);
+		STDLOG(debugFlag_ADVERTISING, "HCI LE Advertising set %s successfully!\n", advertisingSetpoint ? "on" : "off");
 		isAdvertising = true;
 	}
 }
@@ -196,8 +191,7 @@ uint32_t HAL_GetSeconds() {
 
 static void att_disconnect_cb(int err, void *user_data)
 {
-	fprintf(stderr,"Device disconnected: %s\n", strerror(err));
-	fflush(stderr);
+	STDLOG(debugFlag_CONNECTION, "Device disconnected: %s\n", strerror(err));
 
 	advertisingActual = -1;
 
@@ -387,7 +381,7 @@ static void iotgw_data_write_c20_rx_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
+	STDLOG(debugFlag_PACKET,"iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
 	server_t *server = (server_t *)(user_data);
 	uint8_t ecode = 0;
 
@@ -420,7 +414,7 @@ static void iotgw_data_write_cb(struct gatt_db_attribute *attrib,
 					uint8_t opcode, struct bt_att *att,
 					void *user_data)
 {
-	//printf("XXXXXXXXXXXXXXX iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
+	STDLOG(debugFlag_PACKET,"iotgw_data_write_cb called with offset: %d, len: %zu\n", offset, len);
 	server_t *server = (server_t *)(user_data);
 	uint8_t ecode = 0;
 
@@ -530,13 +524,13 @@ static char *inomatic_name = "inomatic GmbH";
 void readSerial() {
 	int fd = open("/sys/bus/nvmem/devices/stm32-romem0/nvmem", O_RDONLY);
 	if (fd < 0) {
-		printf("Could not open nvmem device for inomatic_serialno\n");
+		ERRLOG("Could not open nvmem device for inomatic_serialno\n");
 		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "000000a");
 		return;
 	}
 	off_t pos = lseek(fd, inomatic_serialno_OtpPosition, SEEK_SET);
 	if (pos != inomatic_serialno_OtpPosition) {
-		printf("Could not seek to inomatic_serialno position\n");
+		ERRLOG("Could not seek to inomatic_serialno position\n");
 		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "000000b");
 		close(fd);
 		return;
@@ -549,7 +543,7 @@ void readSerial() {
 		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "%02d%02d%03d", (serialno >> 24) & 0xff, (serialno >> 16) & 0xff, serialno & 0xffff);
 		printf("inomatic_serialno: %s\n", inomatic_serialno);
 	} else {
-		printf("Could not read inomatic_serialno\n");
+		ERRLOG("Could not read inomatic_serialno\n");
 		snprintf(inomatic_serialno, sizeof(inomatic_serialno), "000000c");
 	}
 	close(fd);
@@ -611,8 +605,8 @@ static void populate_iotgw_service(server_t *server)
 
 	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 14);
 	if (serviceData == NULL) {
-		fprintf(stderr, "Failed to add serviceData service !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add serviceData service\n");
+		exit_with_rebind();
 	}
 	server->iotgw_dataservice_handle = gatt_db_attribute_get_handle(serviceData);
 
@@ -622,17 +616,16 @@ static void populate_iotgw_service(server_t *server)
 	const uint128_t zero_uuid = {0};
 	if (bt_string_to_uuid(&uuidReceiveC20Tx, BUILDVAR_GWBT_C20_TX_UUID) < 0 ||
 			uuidReceiveC20Tx.type != BT_UUID128 ||
-			memcmp(&uuidReceiveC20Tx.value.u128, &zero_uuid,
-					sizeof(zero_uuid)) == 0) {
-		fprintf(stderr, "Invalid C20 TX UUID: '%s'\n", BUILDVAR_GWBT_C20_TX_UUID);
-		exit(1);
+			memcmp(&uuidReceiveC20Tx.value.u128, &zero_uuid, sizeof(zero_uuid)) == 0) {
+		ERRLOG("Invalid C20 TX UUID: '%s'\n", BUILDVAR_GWBT_C20_TX_UUID);
+		exit_with_rebind();
 	}
 	if (bt_string_to_uuid(&uuidReceiveC20Rx, BUILDVAR_GWBT_C20_RX_UUID) < 0 ||
 			uuidReceiveC20Rx.type != BT_UUID128 ||
 			memcmp(&uuidReceiveC20Rx.value.u128, &zero_uuid,
 					sizeof(zero_uuid)) == 0) {
-		fprintf(stderr, "Invalid C20 RX UUID: '%s'\n", BUILDVAR_GWBT_C20_RX_UUID);
-		exit(1);
+		ERRLOG("Invalid C20 RX UUID: '%s'\n", BUILDVAR_GWBT_C20_RX_UUID);
+		exit_with_rebind();
 	}
 
 	iotgw_receive_c20_rx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Rx,
@@ -643,8 +636,8 @@ static void populate_iotgw_service(server_t *server)
 						server);
 
 	if (iotgw_receive_c20_rx == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_c20_rx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_c20_rx characteristic\n");
+		exit_with_rebind();
 	}
 
 	bt_uuid_t uuid1;
@@ -656,8 +649,8 @@ static void populate_iotgw_service(server_t *server)
 						NULL, NULL, NULL);
 
 	if (iotgw_receive_c20_tx == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_c20_tx characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_c20_tx characteristic\n");
+		exit_with_rebind();
 	}
 	server->iotgw_data_handle_c20_tx = gatt_db_attribute_get_handle(iotgw_receive_c20_tx);
 
@@ -667,8 +660,8 @@ static void populate_iotgw_service(server_t *server)
 					iotgw_data_ccc_write_cb, server);
 
 	if (iotgw_data_ccc == NULL) {
-		fprintf(stderr, "Failed to add iotgw_data_ccc descriptor !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_data_ccc descriptor\n");
+		exit_with_rebind();
 	}
 
 	iotgw_data = gatt_db_service_add_characteristic(serviceData, &uuidTransmit,
@@ -677,8 +670,8 @@ static void populate_iotgw_service(server_t *server)
 						NULL, NULL, NULL);
 
 	if (iotgw_data == NULL) {
-		fprintf(stderr, "Failed to add iotgw_data characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_data characteristic\n");
+		exit_with_rebind();
 	}
 	server->iotgw_data_handle_aes256 = gatt_db_attribute_get_handle(iotgw_data);
 
@@ -688,8 +681,8 @@ static void populate_iotgw_service(server_t *server)
 					iotgw_data_ccc_write_cb, server);
 
 	if (iotgw_data_ccc == NULL) {
-		fprintf(stderr, "Failed to add iotgw_data_ccc descriptor !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_data_ccc descriptor\n");
+		exit_with_rebind();
 	}
 
 	iotgw_receive_ack = gatt_db_service_add_characteristic(serviceData, &uuidReceiveAck,
@@ -699,8 +692,8 @@ static void populate_iotgw_service(server_t *server)
 						server);
 
 	if (iotgw_receive_ack == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_ack characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_ack characteristic\n");
+		exit_with_rebind();
 	}
 
 	iotgw_receive_no_ack = gatt_db_service_add_characteristic(serviceData, &uuidReceiveNoAck,
@@ -711,8 +704,8 @@ static void populate_iotgw_service(server_t *server)
 						server);
 
 	if (iotgw_receive_no_ack == NULL) {
-		fprintf(stderr, "Failed to add iotgw_receive_no_ack characteristic !!!!!!!!!!!!!!!!!!!!!!!\n");
-		exit(1);
+		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_no_ack characteristic\n");
+		exit_with_rebind();
 	}
 
 	gatt_db_service_set_active(serviceData, true);
@@ -728,35 +721,31 @@ static void populate_db(server_t *server)
 static uint32_t serverid = 1;
 static server_t *server_create(int fd, uint16_t mtu)
 {
-	server_t *server;
+	server_t *server = NULL;
 
 	server = new0(server_t, 1);
-	if (!server) {
-		fprintf(stderr, "Failed to allocate memory for server\n");
-		return NULL;
+	if (server == NULL) {
+		ERRLOG("!!!!!!!!!! Failed to allocate memory for server\n");
+		goto fail;
 	}
 
 	server->serverid = ++serverid;
 
-	fprintf(stderr, "Creating server with serverid %u\n", server->serverid);
-	fflush(stderr);
+	STDLOG(debugFlag_CONNECTION, "Creating server with serverid %u\n", server->serverid);
 
 	server->att = bt_att_new(fd, false);
 	if (!server->att) {
-		fprintf(stderr, "Failed to initialze ATT transport layer\n");
-		fflush(stderr);
+		ERRLOG("Failed to initialze ATT transport layer\n");
 		goto fail;
 	}
 
 	if (!bt_att_set_close_on_unref(server->att, true)) {
-		fprintf(stderr, "Failed to set up ATT transport layer\n");
-		fflush(stderr);
+		ERRLOG("Failed to set up ATT transport layer\n");
 		goto fail;
 	}
 
 	if (!bt_att_register_disconnect(server->att, att_disconnect_cb, server, NULL)) {
-		fprintf(stderr, "Failed to set ATT disconnect handler\n");
-		fflush(stderr);
+		ERRLOG("Failed to set ATT disconnect handler\n");
 		goto fail;
 	}
 
@@ -769,15 +758,13 @@ static server_t *server_create(int fd, uint16_t mtu)
 	server->fd = fd;
 	server->db = gatt_db_new();
 	if (!server->db) {
-		fprintf(stderr, "Failed to create GATT database\n");
-		fflush(stderr);
+		ERRLOG("Failed to create GATT database\n");
 		goto fail;
 	}
 
 	server->gatt = bt_gatt_server_new(server->db, server->att, 512 + 5, 0);
 	if (!server->gatt) {
-		fprintf(stderr, "Failed to create GATT server\n");
-		fflush(stderr);
+		ERRLOG("Failed to create GATT server\n");
 		goto fail;
 	}
 
@@ -799,10 +786,20 @@ static server_t *server_create(int fd, uint16_t mtu)
 	return server;
 
 fail:
-	gatt_db_unref(server->db);
-	bt_att_unref(server->att);
-	free(server);
+	if (server != NULL) {
+		if (server->db != NULL) {
+			gatt_db_unref(server->db);
+		}
+		if (server->gatt != NULL) {
+			bt_gatt_server_unref(server->gatt);
+		}
+		if (server->att != NULL) {
+			bt_att_unref(server->att);
+		}
+		free(server);
+	}
 
+	exit(-1);
 	return NULL;
 }
 
@@ -840,7 +837,7 @@ static int l2cap_le_att_listen(bdaddr_t *src, int sec,
 
 	sockL2CAP = socket(PF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP);
 	if (sockL2CAP < 0) {
-		perror("Failed to create L2CAP socket");
+		ERRLOG("Failed to create L2CAP socket\n");
 		return -1;
 	}
 
@@ -852,7 +849,7 @@ static int l2cap_le_att_listen(bdaddr_t *src, int sec,
 	bacpy(&srcaddr.l2_bdaddr, src);
 
 	if (bind(sockL2CAP, (struct sockaddr *) &srcaddr, sizeof(srcaddr)) < 0) {
-		perror("Failed to bind L2CAP socket");
+		ERRLOG("Failed to bind L2CAP socket\n");
 		goto fail;
 	}
 
@@ -861,19 +858,18 @@ static int l2cap_le_att_listen(bdaddr_t *src, int sec,
 	btsec.level = sec;
 	if (setsockopt(sockL2CAP, SOL_BLUETOOTH, BT_SECURITY, &btsec,
 							sizeof(btsec)) != 0) {
-		fprintf(stderr, "Failed to set L2CAP security level\n");
+		ERRLOG("Failed to set L2CAP security level\n");
 		goto fail;
 	}
 
 	fcntl(sockL2CAP, F_SETFL, O_NONBLOCK);
 
 	if (listen(sockL2CAP, 10) < 0) {
-		perror("Listening on socket failed");
+		ERRLOG("Listening on socket failed\n");
 		goto fail;
 	}
 
-	fprintf(stderr,"Started listening on ATT channel. Waiting for connections\n");
-	fflush(stderr);
+	STDLOG(debugFlag_CONNECTION, "Started listening on ATT channel. Waiting for connections\n");
 	return 0;
 
 fail:
@@ -932,8 +928,7 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 				int64_t diff = getMicroSecs() - uiLastSentUs;
 				if (diff > 100 && diff <= 20000) {
 					pthread_mutex_unlock(&g_server_lock);
-					//fprintf(stderr, "Delaying for next packet: %lld us !!!\n", diff);
-					//fflush(stderr);
+					ERRLOG("!!!!! Delaying for next packet: %lld us !!!\n", diff);
 					usleep(diff);
 					pthread_mutex_lock(&g_server_lock);
 				}
@@ -941,8 +936,7 @@ void sendBtNotification(const uint8_t *value, size_t length) {
 				if (g_servers[i] != NULL) {
 					if (g_servers[i]->iotgw_data_enabled) {
 						if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle_aes256, value, length, false)) {
-							fprintf(stderr,"Failed to initiate notification\n");
-							fflush(stderr);
+							ERRLOG("Failed to initiate notification\n");
 						}
 						uiLastSentUs = getMicroSecs();
 					}
@@ -960,13 +954,11 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t se
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->serverid == serverid) {
 				if (g_servers[i]->iotgw_data_enabled) {
-					fprintf(stderr, "Sending notification to serverid: %u, fd: %d\n", g_servers[i]->serverid, g_servers[i]->fd);
-					fflush(stderr);
+					STDLOG(debugFlag_PACKET, "Sending notification to serverid: %u, fd: %d\n", g_servers[i]->serverid, g_servers[i]->fd);
 					int64_t diff = getMicroSecs() - uiLastSentUs;
 					if (diff > 100 && diff <= 20000) {
 						pthread_mutex_unlock(&g_server_lock);
-						//fprintf(stderr, "Delaying for next packet: %lld us !!!\n", diff);
-						//fflush(stderr);
+						ERRLOG("!!!!! Delaying for next packet: %lld us !!!\n", diff);
 						usleep(diff);
 						pthread_mutex_lock(&g_server_lock);
 					}
@@ -974,18 +966,16 @@ void sendBtNotificationServerid(const uint8_t *value, size_t length, uint32_t se
 					if (g_servers[i] != NULL) {
 						if (true || g_servers[i]->iotgw_data_enabled) {
 							if (!bt_gatt_server_send_notification(g_servers[i]->gatt, g_servers[i]->iotgw_data_handle_c20_tx, value, length, false)) {
-								fprintf(stderr,"Failed to initiate notification\n");
-								fflush(stderr);
+								ERRLOG("Failed to initiate notification\n");
 							} else {
-								//fprintf(stderr,"Notification sent successfully\n");
+								STDLOG(debugFlag_PACKET,"Notification sent successfully\n");
 								//fflush(stderr);
 							}
 							uiLastSentUs = getMicroSecs();
 						}
 					}
 				} else {
-					fprintf(stderr, "Failed to send notification to serverid: %u, iotgw_data_enabled: %d\n", g_servers[i]->serverid, g_servers[i]->iotgw_data_enabled);
-					fflush(stderr);
+					ERRLOG("Failed to send notification to serverid: %u, iotgw_data_enabled: %d\n", g_servers[i]->serverid, g_servers[i]->iotgw_data_enabled);
 				}
 			} else {
 				//fprintf(stderr, "Serverid mismatch: expected %u, got %u\n", serverid, g_servers[i]->serverid);
@@ -1054,7 +1044,7 @@ int btinit()
 
 	// Send the "Set Advertising Data" command
 	if (hci_send_req(dev_sock, &rq, 1000) < 0) {
-			perror("Failed to set advertising data");
+			ERRLOG("Failed to set advertising data\n");
 			close(dev_sock);
 			return EXIT_FAILURE;
 	}
@@ -1107,18 +1097,17 @@ int btloop() {
 
 	int ret = poll(fds, 1, 1);
 	if (ret < 0) {
-			perror("Poll error");
+			ERRLOG("Poll error\n");
 			return EXIT_FAILURE;
 	} 
 	else if (ret > 0) {
 		if (fds[0].revents & POLLIN) {
-			printf("HCI Event received\n");
+			STDLOG(debugFlag_DETAILED, "HCI Event received\n");
 			ssize_t len = read(dev_sock, buf, sizeof(buf));
 			if (len < 0) {
-				perror("Error reading HCI socket");
+				ERRLOG("Error reading HCI socket\n");
 				return EXIT_FAILURE;
 			}
-			printf("HCI Event read\n");
 
 			// 3. Parse the HCI Event Packet
 			// buf[0] is the packet type (HCI_EVENT_PKT)
@@ -1137,23 +1126,30 @@ int btloop() {
 							
 							if (cc->status == 0) { // 0 means success
 									uint16_t handle = btohs(cc->handle);
-									printf("Client Connected! Handle: 0x%04X\n", handle);
 									//request_fast_connection(handle);
 									advertisingActual = -1;
+									deviceCount++;
+									STDLOG(debugFlag_CONNECTION, "Client Connected! Handle: 0x%04X, device count: %d\n", handle, deviceCount);
 							}
 					}
 			} else if (hdr->evt == EVT_DISCONN_COMPLETE) {
 					evt_disconn_complete *dc = (evt_disconn_complete *)ptr;
 					
 					if (dc->status == 0) {
-							printf("Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
+							STDLOG(debugFlag_CONNECTION, "Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
+							deviceCount--;
+							if (deviceCount < 0) {
+								ERRLOG("Device count went below zero\n");
+								deviceCount = 0;
+							} else {
+								STDLOG(debugFlag_CONNECTION, "Device count after disconnection: %d\n", deviceCount);
+							}
 					}
 			} else if (hdr->evt == EVT_HARDWARE_ERROR) {
-				fprintf(stderr, "Hardware error occurred\n");
-				fflush(stderr);
-				advertisingActual = -1;
+				ERRLOG("!!!!!!!!!! Hardware error occurred\n");
+				exit_with_rebind();
 			} else {
-				printf(" !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Unhandled HCI Event: 0x%02X\n", hdr->evt);
+				ERRLOG("!!!!! Unhandled HCI Event: 0x%02X\n", hdr->evt);
 			}
 		}
 	}
@@ -1168,13 +1164,13 @@ int btloop() {
 		if (dev_id == -1)
 			bacpy(&src_addr, BDADDR_ANY);
 		else if (hci_devba(dev_id, &src_addr) < 0) {
-			perror("Adapter not available");
+			ERRLOG("Adapter not available\n");
 			return EXIT_FAILURE;
 		}
 
 		int res = l2cap_le_att_listen(&src_addr, sec, src_type);
 		if (res != 0) {
-			fprintf(stderr, "Failed to listen for L2CAP ATT connection\n");
+			ERRLOG("Failed to listen for L2CAP ATT connection\n");
 			return EXIT_FAILURE;
 		}
 	} else {
@@ -1187,7 +1183,7 @@ int btloop() {
 		if (dev_id == -1)
 			bacpy(&src_addr, BDADDR_ANY);
 		else if (hci_devba(dev_id, &src_addr) < 0) {
-			perror("Adapter not available");
+			ERRLOG("Adapter not available\n");
 			return EXIT_FAILURE;
 		}
 
@@ -1218,8 +1214,7 @@ int btloop() {
 		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
 			if (g_servers[i]->lastReceivedBtPacketTime != 0 && HAL_GetSeconds() - g_servers[i]->lastReceivedBtPacketTime > 20) {
-				fprintf(stderr,"No data received for 20 seconds, disconnecting\n");
-				fflush(stderr);
+				ERRLOG("No data received for 20 seconds, disconnecting\n");
 
 				mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 				close(g_servers[i]->fd);
@@ -1245,18 +1240,18 @@ int btloop() {
 }
 
 void bt_at_exit() {
-
-	fprintf(stderr,"Destroying servers...\n");
+	fprintf(stdout,"Destroying servers...\n");
 	servers_destroy();
 	if (sockL2CAP >= 0) {
-		fprintf(stderr,"Closing socket...\n");
+		fprintf(stdout,"Closing socket...\n");
 		close(sockL2CAP);
 		sockL2CAP = -1;
 	}
+	fflush(stdout);
 }
 
 int btquit() {
-	fprintf(stderr,"\n\nShutting down...\n");
+	fprintf(stdout,"\n\nShutting down...\n");
 
 	mainloop_finish();
 

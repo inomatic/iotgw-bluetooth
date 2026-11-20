@@ -40,3 +40,30 @@ extern void receivedBtChacha20Poly1305AEADPacket(const uint8_t *value, size_t le
 extern void receivedBtC20PacketRx(const uint8_t *value, size_t len, server_t *server);
 extern void receivedBtPacket(const uint8_t *value, size_t len);
 
+extern uint64_t debugFlags;
+#define debugFlag_STATISTIC 0x01
+#define debugFlag_ADVERTISING 0x02
+#define debugFlag_CONNECTION 0x04
+#define debugFlag_PACKET 0x08
+#define debugFlag_DETAILED 0x10
+#define debugFlag_HCI 0x80
+
+#define ERRLOG(...) \
+	do { \
+		fprintf(stderr,__VA_ARGS__); \
+		fflush(stderr); \
+	} while (0)
+
+#define STDLOG(flag, ...) \
+	if (debugFlags & (flag)) { \
+		fprintf(stdout,__VA_ARGS__); \
+		fflush(stdout); \
+	}
+
+#define PRLOG(...) \
+	if (debugFlags & (debugFlag_HCI)) { \
+		fprintf(stdout,__VA_ARGS__); \
+		fflush(stdout); \
+	}
+
+void exit_with_rebind();

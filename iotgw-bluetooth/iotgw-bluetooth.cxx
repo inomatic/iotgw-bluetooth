@@ -65,9 +65,14 @@ static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_
     return;
   }
 
+  if (strcmp(topic, "gateway/bluetooth/debugFlags") == 0) {
+    debugFlags = strtoull((const char *)bytes, NULL, 16);
+    return;
+  }
+
   uint64_t serverid;
   if (std::sscanf(topic, BUILDVAR_GWBTBTBT_C20_TX "%llu", &serverid) == 1) {
-    fprintf(stderr, "Received MQTT C20 to serverid: %llu\n", serverid);
+    STDLOG(debugFlag_PACKET, "Received MQTT C20 to serverid: %llu\n", serverid);
     sendBtNotificationServerid(bytes, len, serverid);
     return;
   }
@@ -85,14 +90,14 @@ extern "C" {
   void receivedBtPacket(const uint8_t *value, size_t len)
   {
     if (!mqttpublishbinary(BUILDVAR_GWBTBTBTFRAME, value, len)) {
-      printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
+      ERRLOG("!!!!! Failed to publish MQTT message\n");
     }
   }
 
   void receivedBtChacha20Poly1305AEADPacket(const uint8_t *value, size_t len)
   {
     if (!mqttpublishbinary(BUILDVAR_GWBTBTBTCHACHA20POLY1305AEADFRAME, value, len)) {
-      printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
+      ERRLOG("!!!!! Failed to publish MQTT message\n");
     }
   }
 
@@ -101,9 +106,9 @@ extern "C" {
     std::stringstream ss;
     ss << BUILDVAR_GWBTBTBT_C20_RX << "" << server->serverid;
     std::string topicStr = ss.str();
-    fprintf(stderr, "C20 Publishing to topic: %s\n", topicStr.c_str());
+    STDLOG(debugFlag_PACKET, "C20 Publishing to topic: %s\n", topicStr.c_str());
     if (!mqttpublishbinary(topicStr.c_str(), value, len)) {
-      printf("XXXXXXXXXXXXXXXXXXX Failed to publish MQTT message\n");
+      ERRLOG("!!!!! Failed to publish MQTT message\n");
     }
   }
 }
@@ -142,11 +147,12 @@ extern "C" {
         printf("Bluetooth initialized successfully on attempt %d/3\n", j+1);
         break;
       }
-      printf("Bluetooth failed to initialize %d/3\n", j+1);
+      ERRLOG("Bluetooth failed to initialize %d/3\n", j+1);
     }
     if (i != EXIT_SUCCESS)
     {
       return i;
+      exit_with_rebind();
     }
 
     uint32_t uiLastOnlineSent = 0;
@@ -155,13 +161,13 @@ extern "C" {
     {
       if (!mqttloop())
       {
-        printf("MQTT failed\n");
+        ERRLOG("MQTT failed\n");
         g_quit = true;
       }
 
       if (btloop() != EXIT_SUCCESS)
       {
-        printf("BT failed\n");
+        ERRLOG("BT failed\n");
         g_quit = true;
       }
 
