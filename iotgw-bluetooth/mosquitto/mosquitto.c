@@ -163,9 +163,9 @@ int mqttinit(const char *clientidprefix, void (*p_on_message)(const char *, cons
 	cfg.username = BUILDVAR_GWBTMQTTUSER;
 	cfg.password = BUILDVAR_GWBTMQTTPASSWORD;
 	cfg.publish_props = NULL;
-	cfg.retain = 0;
-	cfg.no_retain = true;
-	cfg.sub_opts |= MQTT_SUB_OPT_SEND_RETAIN_NEVER | MQTT_SUB_OPT_NO_LOCAL;
+	cfg.retain = false;
+	cfg.no_retain = false;
+	cfg.sub_opts |= MQTT_SUB_OPT_SEND_RETAIN_ALWAYS | MQTT_SUB_OPT_NO_LOCAL;
 
 	if(client_id_generate(&cfg)){
 		return 1;

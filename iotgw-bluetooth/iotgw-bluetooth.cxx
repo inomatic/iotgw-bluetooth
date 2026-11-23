@@ -49,6 +49,7 @@ static void mqtt_connected_callback()
   isConnected = true;
 
   mqttsubscribe("#", 2);
+  mqttsubscribe("gateway/bluetooth/debugFlags", 1);
 }
 
 extern uint32_t uiBtSetpoint;
@@ -66,6 +67,8 @@ static void mqtt_message_callback(const char *topic, const uint8_t *bytes, size_
   }
 
   if (strcmp(topic, "gateway/bluetooth/debugFlags") == 0) {
+    printf("Received Bluetooth debug flags: %s\n", (const char *)bytes);
+    fflush(stdout);
     debugFlags = strtoull((const char *)bytes, NULL, 16);
     return;
   }
@@ -151,8 +154,8 @@ extern "C" {
     }
     if (i != EXIT_SUCCESS)
     {
+      exit_with_rebind("Failed to initialize Bluetooth");
       return i;
-      exit_with_rebind();
     }
 
     uint32_t uiLastOnlineSent = 0;

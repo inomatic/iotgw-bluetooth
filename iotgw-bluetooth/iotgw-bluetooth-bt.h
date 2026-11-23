@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <time.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -31,10 +32,11 @@ typedef struct {
 	bool iotgw_data_enabled;
 
 	uint32_t serverid;
+	uint32_t uiConnectTime;
 	bool c20_enabled;
 } server_t;
 
-#define MaxServers 5
+#define MaxServers 3
 
 extern void receivedBtChacha20Poly1305AEADPacket(const uint8_t *value, size_t len);
 extern void receivedBtC20PacketRx(const uint8_t *value, size_t len, server_t *server);
@@ -48,22 +50,8 @@ extern uint64_t debugFlags;
 #define debugFlag_DETAILED 0x10
 #define debugFlag_HCI 0x80
 
-#define ERRLOG(...) \
-	do { \
-		fprintf(stderr,__VA_ARGS__); \
-		fflush(stderr); \
-	} while (0)
+void ERRLOG(const char *format, ...);
+void STDLOG(uint64_t flag, const char *format, ...);
+void PRLOG(const char *format, ...);
 
-#define STDLOG(flag, ...) \
-	if (debugFlags & (flag)) { \
-		fprintf(stdout,__VA_ARGS__); \
-		fflush(stdout); \
-	}
-
-#define PRLOG(...) \
-	if (debugFlags & (debugFlag_HCI)) { \
-		fprintf(stdout,__VA_ARGS__); \
-		fflush(stdout); \
-	}
-
-void exit_with_rebind();
+void exit_with_rebind(const char* cause);

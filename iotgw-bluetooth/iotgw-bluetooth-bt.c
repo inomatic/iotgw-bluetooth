@@ -52,6 +52,36 @@ const bdaddr_t bdaddr_local = {{0, 0, 0, 0xff, 0xff, 0xff}};
 
 #include "iotgw-bluetooth-bt.h"
 
+void ERRLOG(const char *format, ...) {
+	do {
+		va_list args;
+		va_start(args, format);
+		vfprintf(stderr, format, args);
+		va_end(args);
+		fflush(stderr);
+	} while (0);
+}
+
+void STDLOG(uint64_t flag, const char *format, ...) {
+	if (debugFlags & (flag)) {
+		va_list args;
+		va_start(args, format);
+		vfprintf(stdout, format, args);
+		va_end(args);
+		fflush(stdout);
+	}
+}
+
+void PRLOG(const char *format, ...) {
+	if (debugFlags & (debugFlag_HCI)) {
+		va_list args;
+		va_start(args, format);
+		vfprintf(stdout, format, args);
+		va_end(args);
+		fflush(stdout);
+	}
+}
+
 bt_uuid_t uuidDeviceGAP;
 bt_uuid_t uuidDeviceGATT;
 bt_uuid_t uuidDataService;
@@ -79,80 +109,6 @@ bt_uuid_t uuidManufacturerName;
 #define COLOR_BOLDGRAY	"\x1B[1;30m"
 #define COLOR_BOLDWHITE	"\x1B[1;37m"
 
-int dev_id;
-int dev_sock;
-
-static const char *device_name_format = BUILDVAR_GWBTNAME;
-
-static int verbose = 1;
-
-server_t* g_servers[MaxServers] = {0};
-pthread_mutex_t g_server_lock;
-
-static void server_destroy(server_t *server, uint8_t i);
-static int advertisingFailCount = 0;
-static int advertisingSetpoint = -1;
-static int advertisingActual = -1;
-static int deviceCount = 0;
-uint32_t uiBtSetpoint = 0x06;
-static bool isAdvertising = false;
-
-void exit_with_rebind() {
-	system("/usr/bin/systemctl --no-block start bluetooth-rebind");
-	exit(42);
-}
-
-static void restart_hci_advertising() {
-	/*if ((uiBtSetpoint & 2) == 2) {
-		if ((uiBtActual & 2) != 2) {
-			//printf("Bluetooth state turning on\n");
-			//system("/usr/bin/systemctl start bluetooth");
-			uiBtActual |= 2;
-		}
-	} else {
-		if ((uiBtActual & 2) == 2) {
-			//printf("Bluetooth state turning off\n");
-			//system("/usr/bin/systemctl stop bluetooth");
-			uiBtActual &= ~2;
-		}
-	}*/
-
-	if ((uiBtSetpoint & 4) == 4) {
-		advertisingSetpoint = 1;
-	} else {
-		advertisingSetpoint = 0;
-	}
-
-	if (advertisingActual == advertisingSetpoint) {
-		return;
-	}
-
-	uint8_t status = 0;
-	int timeout = 1000;
-	uint8_t res = hci_le_set_advertise_enable(dev_sock, advertisingSetpoint, timeout, &status);
-	if (res != 0) {
-		if (status == BT_HCI_ERR_COMMAND_DISALLOWED) {
-			// already advertising
-			advertisingFailCount = 0;
-			STDLOG(debugFlag_ADVERTISING, "Advertising is already %s\n", advertisingSetpoint ? "on" : "off");
-			advertisingActual = advertisingSetpoint;
-		} else {
-			advertisingFailCount++;
-			ERRLOG("!!!!! Failed to set LE advertising %s %d %d %d\n", advertisingSetpoint ? "on" : "off", res, status, advertisingFailCount);
-			if(advertisingFailCount > 3) {
-				ERRLOG("!!!!!!!!!! Advertising failed after multiple attempts\n");
-				exit_with_rebind();
-			}
-			sleep(1);
-		}
-	} else {
-		advertisingActual = advertisingSetpoint;
-		advertisingFailCount = 0;
-		STDLOG(debugFlag_ADVERTISING, "HCI LE Advertising set %s successfully!\n", advertisingSetpoint ? "on" : "off");
-		isAdvertising = true;
-	}
-}
-
 uint32_t HAL_GetTick() {
 	long            ms;
 	time_t          s;
@@ -175,25 +131,77 @@ uint32_t HAL_GetSeconds() {
 	return spec.tv_sec;
 }
 
-/*static void request_fast_connection(uint16_t handle)
-{
-	int err;
+int dev_id;
+int dev_sock;
 
-	err = hci_le_conn_update(dev_sock, handle, BLE_CONN_INTERVAL_MIN,
-					BLE_CONN_INTERVAL_MAX, BLE_CONN_LATENCY,
-					BLE_CONN_SUPERVISION_TIMEOUT, 1000);
-	if (err < 0) {
-		fprintf(stderr, "Failed to request fast BLE connection parameters: %s\n",
-								strerror(errno));
-		fflush(stderr);
+static const char *device_name_format = BUILDVAR_GWBTNAME;
+
+static int verbose = 1;
+
+server_t* g_servers[MaxServers] = {0};
+pthread_mutex_t g_server_lock;
+
+static void server_destroy(server_t *server, uint8_t i);
+static int advertisingFailCount = 0;
+static int advertisingSetpoint = 0;
+static int advertisingActual = 0;
+static uint32_t deviceCount = 0;
+static uint32_t connectionCount = 0;
+static uint32_t connectionStat = 0;
+static uint32_t connectionStatTimestamp = 0;
+static uint32_t uiLastDisconnect = 0;
+static bool bLongConnectionRestart = true;
+uint32_t uiBtSetpoint = 0x06;
+
+void exit_with_rebind(const char* cause) {
+	ERRLOG("Exiting with rebind due to: %s\n", cause);
+	system("/usr/bin/systemctl --no-block start bluetooth-rebind");
+	exit(42);
+}
+
+static void restart_hci_advertising() {
+	static uint32_t lastRun = 0;
+	if (HAL_GetSeconds() - 3 < lastRun) {
+		return;
 	}
-}*/
+	lastRun = HAL_GetSeconds();
+
+	if ((uiBtSetpoint & 6) == 6 && deviceCount < MaxServers) {
+		advertisingSetpoint = 1;
+	} else {
+		advertisingSetpoint = 0;
+	}
+
+	if (advertisingActual == advertisingSetpoint) {
+		return;
+	}
+
+	uint8_t status = 0;
+	int timeout = 1000;
+	int res = hci_le_set_advertise_enable(dev_sock, advertisingSetpoint, timeout, &status);
+	if (res != 0) {
+		advertisingFailCount++;
+		ERRLOG("!!!!! Failed to set LE advertising %s %d %d %d %d\n", advertisingSetpoint ? "on" : "off", res, status, errno, advertisingFailCount);
+		if(advertisingFailCount > 10) {
+			ERRLOG("!!!!!!!!!! Advertising failed after multiple attempts\n");
+			exit_with_rebind("Advertising failed after multiple attempts");
+		}
+	} else {
+		if (advertisingFailCount > 0) {
+			ERRLOG("!!!!! Fail recovered. HCI LE Advertising set %s successfully!!!\n", advertisingSetpoint ? "on" : "off");
+		} else {
+			STDLOG(debugFlag_ADVERTISING, "HCI LE Advertising set %s successfully!!!\n", advertisingSetpoint ? "on" : "off");
+		}
+		advertisingActual = advertisingSetpoint;
+		advertisingFailCount = 0;
+	}
+}
 
 static void att_disconnect_cb(int err, void *user_data)
 {
 	STDLOG(debugFlag_CONNECTION, "Device disconnected: %s\n", strerror(err));
 
-	advertisingActual = -1;
+	//advertisingActual = -1;
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, "-");
 
@@ -606,7 +614,7 @@ static void populate_iotgw_service(server_t *server)
 	serviceData = gatt_db_add_service(server->db, &uuidDataService, true, 14);
 	if (serviceData == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add serviceData service\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add serviceData service");
 	}
 	server->iotgw_dataservice_handle = gatt_db_attribute_get_handle(serviceData);
 
@@ -618,14 +626,14 @@ static void populate_iotgw_service(server_t *server)
 			uuidReceiveC20Tx.type != BT_UUID128 ||
 			memcmp(&uuidReceiveC20Tx.value.u128, &zero_uuid, sizeof(zero_uuid)) == 0) {
 		ERRLOG("Invalid C20 TX UUID: '%s'\n", BUILDVAR_GWBT_C20_TX_UUID);
-		exit_with_rebind();
+		exit_with_rebind("Invalid C20 TX UUID");
 	}
 	if (bt_string_to_uuid(&uuidReceiveC20Rx, BUILDVAR_GWBT_C20_RX_UUID) < 0 ||
 			uuidReceiveC20Rx.type != BT_UUID128 ||
 			memcmp(&uuidReceiveC20Rx.value.u128, &zero_uuid,
 					sizeof(zero_uuid)) == 0) {
 		ERRLOG("Invalid C20 RX UUID: '%s'\n", BUILDVAR_GWBT_C20_RX_UUID);
-		exit_with_rebind();
+		exit_with_rebind("Invalid C20 RX UUID");
 	}
 
 	iotgw_receive_c20_rx = gatt_db_service_add_characteristic(serviceData, &uuidReceiveC20Rx,
@@ -637,7 +645,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_receive_c20_rx == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_c20_rx characteristic\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_receive_c20_rx characteristic");
 	}
 
 	bt_uuid_t uuid1;
@@ -650,7 +658,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_receive_c20_tx == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_c20_tx characteristic\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_receive_c20_tx characteristic");
 	}
 	server->iotgw_data_handle_c20_tx = gatt_db_attribute_get_handle(iotgw_receive_c20_tx);
 
@@ -661,7 +669,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_data_ccc == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_data_ccc descriptor\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_data_ccc descriptor");
 	}
 
 	iotgw_data = gatt_db_service_add_characteristic(serviceData, &uuidTransmit,
@@ -671,7 +679,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_data == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_data characteristic\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_data characteristic");
 	}
 	server->iotgw_data_handle_aes256 = gatt_db_attribute_get_handle(iotgw_data);
 
@@ -682,7 +690,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_data_ccc == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_data_ccc descriptor\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_data_ccc descriptor");
 	}
 
 	iotgw_receive_ack = gatt_db_service_add_characteristic(serviceData, &uuidReceiveAck,
@@ -693,7 +701,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_receive_ack == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_ack characteristic\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_receive_ack characteristic");
 	}
 
 	iotgw_receive_no_ack = gatt_db_service_add_characteristic(serviceData, &uuidReceiveNoAck,
@@ -705,7 +713,7 @@ static void populate_iotgw_service(server_t *server)
 
 	if (iotgw_receive_no_ack == NULL) {
 		ERRLOG("!!!!!!!!!! Failed to add iotgw_receive_no_ack characteristic\n");
-		exit_with_rebind();
+		exit_with_rebind("Failed to add iotgw_receive_no_ack characteristic");
 	}
 
 	gatt_db_service_set_active(serviceData, true);
@@ -730,8 +738,13 @@ static server_t *server_create(int fd, uint16_t mtu)
 	}
 
 	server->serverid = ++serverid;
+	server->uiConnectTime = HAL_GetSeconds();
 
-	STDLOG(debugFlag_CONNECTION, "Creating server with serverid %u\n", server->serverid);
+	deviceCount++;
+	connectionCount++;
+	connectionStat++;
+	STDLOG(debugFlag_DETAILED, "Connection count: %d, Connection stat: %d\n", connectionCount, connectionStat);
+	STDLOG(debugFlag_CONNECTION, "Creating server with serverid %u, device count: %d\n", server->serverid, deviceCount);
 
 	server->att = bt_att_new(fd, false);
 	if (!server->att) {
@@ -811,10 +824,23 @@ static void server_destroy(server_t *server, uint8_t i)
 			close(server->fd);
 			server->fd = -1;
 		}
+		uint32_t uiConnectTime = server->uiConnectTime;
 		bt_gatt_server_unref(server->gatt);
 		gatt_db_unref(server->db);
 		bt_att_unref(server->att);
 		free(server);
+
+		if (deviceCount == 0) {
+			ERRLOG("Device count went below zero\n");
+		} else {
+			deviceCount--;
+			STDLOG(debugFlag_CONNECTION, "Device count after disconnection: %d\n", deviceCount);
+		}
+		if (HAL_GetSeconds() - uiConnectTime > 60 * 60) {
+			STDLOG(debugFlag_CONNECTION, "Device was connected for more than an hour\n");
+			bLongConnectionRestart = true;
+		}
+		uiLastDisconnect = (uint32_t)HAL_GetSeconds();
 	}
 	g_servers[i] = NULL;
 	pthread_mutex_unlock(&g_server_lock);
@@ -894,9 +920,6 @@ static int l2cap_le_att_accept(bdaddr_t *src, int sec,
 	ba2str(&addr.l2_bdaddr, ba);
 
 	mqttpublish(BUILDVAR_GWBTCONNECT, ba);
-
-	//AAA close(sockL2CAP);
-	//AAA sockL2CAP = -1;
 
 	return sockConn;
 }
@@ -1088,19 +1111,42 @@ int btinit()
 bool bHwaddrSent = false;
 
 int btloop() {
+	if (bLongConnectionRestart && deviceCount == 0 && uiLastDisconnect > 0 && HAL_GetSeconds() - uiLastDisconnect > 60) {
+		STDLOG(debugFlag_CONNECTION, "Long connection restart triggered\n");
+		exit_with_rebind("Long connection restart triggered");
+		return EXIT_FAILURE;
+	}
+
+
+	const uint32_t now = HAL_GetSeconds();
+	if (now - connectionStatTimestamp > 60) {
+		connectionStatTimestamp = now;
+		if (connectionStat >= 2) {
+			connectionStat -= 2;
+			STDLOG(debugFlag_DETAILED, "Connection stat decreased, new value: %d\n", connectionStat);
+		} else if (connectionStat >= 1) {
+			connectionStat -= 1;
+			STDLOG(debugFlag_DETAILED, "Connection stat decreased, new value: %d\n", connectionStat);
+		}
+		if (connectionStat >= 6) {
+			ERRLOG("Connection stat too high: %d\n", connectionStat);
+			exit_with_rebind("Connection stat too high");
+			return EXIT_FAILURE;
+		}
+	}
+	
 	restart_hci_advertising();
 
 	unsigned char buf[HCI_MAX_EVENT_SIZE];
 	struct pollfd fds[1];
 	fds[0].fd = dev_sock;
 	fds[0].events = POLLIN;
-
+	
 	int ret = poll(fds, 1, 1);
 	if (ret < 0) {
-			ERRLOG("Poll error\n");
+			ERRLOG("!!!!! Poll error\n");
 			return EXIT_FAILURE;
-	} 
-	else if (ret > 0) {
+	} else if (ret > 0) {
 		if (fds[0].revents & POLLIN) {
 			STDLOG(debugFlag_DETAILED, "HCI Event received\n");
 			ssize_t len = read(dev_sock, buf, sizeof(buf));
@@ -1108,16 +1154,16 @@ int btloop() {
 				ERRLOG("Error reading HCI socket\n");
 				return EXIT_FAILURE;
 			}
-
+	
 			// 3. Parse the HCI Event Packet
 			// buf[0] is the packet type (HCI_EVENT_PKT)
 			// buf[1] is the event code
 			// buf[2] is the parameter length
 			// buf[3...] is the actual event data
-
+	
 			hci_event_hdr *hdr = (hci_event_hdr *)(buf + 1);
 			uint8_t *ptr = buf + 1 + HCI_EVENT_HDR_SIZE;
-
+	
 			if (hdr->evt == EVT_LE_META_EVENT) {
 					evt_le_meta_event *meta = (evt_le_meta_event *)ptr;
 					
@@ -1127,9 +1173,10 @@ int btloop() {
 							if (cc->status == 0) { // 0 means success
 									uint16_t handle = btohs(cc->handle);
 									//request_fast_connection(handle);
-									advertisingActual = -1;
-									deviceCount++;
+									//advertisingActual = -1;
+									//deviceCount++;
 									STDLOG(debugFlag_CONNECTION, "Client Connected! Handle: 0x%04X, device count: %d\n", handle, deviceCount);
+									ERRLOG("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 1");
 							}
 					}
 			} else if (hdr->evt == EVT_DISCONN_COMPLETE) {
@@ -1137,23 +1184,22 @@ int btloop() {
 					
 					if (dc->status == 0) {
 							STDLOG(debugFlag_CONNECTION, "Client Disconnected! Handle: 0x%04X, Reason: 0x%02X\n", dc->handle, dc->reason);
-							deviceCount--;
-							if (deviceCount < 0) {
-								ERRLOG("Device count went below zero\n");
-								deviceCount = 0;
-							} else {
-								STDLOG(debugFlag_CONNECTION, "Device count after disconnection: %d\n", deviceCount);
-							}
+							ERRLOG("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! 2");
+							//if (deviceCount == 0) {
+							//	ERRLOG("Device count went below zero\n");
+							//} else {
+							//  deviceCount--;
+							//	STDLOG(debugFlag_CONNECTION, "Device count after disconnection: %d\n", deviceCount);
+							//}
 					}
 			} else if (hdr->evt == EVT_HARDWARE_ERROR) {
 				ERRLOG("!!!!!!!!!! Hardware error occurred\n");
-				exit_with_rebind();
+				exit_with_rebind("Hardware error occurred");
 			} else {
 				ERRLOG("!!!!! Unhandled HCI Event: 0x%02X\n", hdr->evt);
 			}
 		}
 	}
-
 
 	if (sockL2CAP < 0) {
 		bdaddr_t src_addr;
@@ -1206,20 +1252,16 @@ int btloop() {
 			}
 			pthread_mutex_unlock(&g_server_lock);
 
-			advertisingActual = -1;
+			advertisingActual = 0;
 		}
 	}
 
 	for(uint8_t i = 0; i < MaxServers; i++) {
 		pthread_mutex_lock(&g_server_lock);
 		if (g_servers[i] != NULL) {
-			if (g_servers[i]->lastReceivedBtPacketTime != 0 && HAL_GetSeconds() - g_servers[i]->lastReceivedBtPacketTime > 20) {
-				ERRLOG("No data received for 20 seconds, disconnecting\n");
-
+			if (g_servers[i]->lastReceivedBtPacketTime != 0 && HAL_GetSeconds() - g_servers[i]->lastReceivedBtPacketTime > 10) {
+				ERRLOG("No data received for 10 seconds, disconnecting\n");
 				mqttpublish(BUILDVAR_GWBTCONNECT, "-");
-				close(g_servers[i]->fd);
-				g_servers[i]->fd = -1;
-				g_servers[i]->lastReceivedBtPacketTime = 0;
 				server_destroy(g_servers[i], i);
 			}
 		}
